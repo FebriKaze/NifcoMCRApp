@@ -123,6 +123,7 @@ export default function App() {
   // --- Voice Recognition Setup ---
   
   const recognitionRef = useRef<any>(null);
+  const silenceTimerRef = useRef<any>(null);
 
   const initRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -235,6 +236,7 @@ export default function App() {
 
     if (isListening) {
       try {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         recognitionRef.current?.abort(); // Abort lebih keras daripada stop
       } catch (e) {}
       setIsListening(false);
@@ -262,34 +264,58 @@ export default function App() {
       recognition.interimResults = true; // Aktifkan agar teks muncul saat bicara
       recognition.lang = 'id-ID';
 
+      const resetSilenceTimer = (final = false) => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        if (!final) {
+          silenceTimerRef.current = setTimeout(() => {
+            console.log('Silence detected, stopping...');
+            recognition.stop();
+          }, 1500); // Berhenti otomatis setelah 1.5 detik diam
+        }
+      };
+
       recognition.onstart = () => {
         setIsListening(true);
         setTranscript('Mulai mendengarkan...');
+        resetSilenceTimer();
       };
 
       recognition.onsoundstart = () => {
         setTranscript('Suara terdeteksi...');
+        resetSilenceTimer();
       };
 
       recognition.onresult = (event: any) => {
         let interimTranscript = '';
+        let finalTranscript = '';
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const transcriptText = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            setTranscript(transcriptText);
-            handleVoiceSearch(transcriptText);
+            finalTranscript = transcriptText;
           } else {
             interimTranscript += transcriptText;
-            setTranscript(interimTranscript + '...');
           }
+        }
+
+        if (finalTranscript) {
+          resetSilenceTimer(true);
+          setTranscript(finalTranscript);
+          handleVoiceSearch(finalTranscript);
+          recognition.stop(); // Paksa stop setelah dapat hasil final
+        } else if (interimTranscript) {
+          setTranscript(interimTranscript + '...');
+          resetSilenceTimer();
         }
       };
 
       recognition.onend = () => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         setIsListening(false);
       };
 
       recognition.onerror = (event: any) => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         console.error('Recognition Error:', event.error);
         setIsListening(false);
         
