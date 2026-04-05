@@ -1,0 +1,5 @@
+{
+  "name": "MCR Inventory Voice",
+  "description": "Enterprise-grade voice-controlled inventory management system with real-time search and Indonesian voice feedback.",
+  "requestFramePermissions": ["microphone"]
+}

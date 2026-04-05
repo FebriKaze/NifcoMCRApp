@@ -1,0 +1,536 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+  Package, 
+  Mic, 
+  History, 
+  Settings, 
+  Search, 
+  AlertTriangle, 
+  CheckCircle2, 
+  Volume2, 
+  VolumeX,
+  User,
+  Database,
+  RefreshCw,
+  LogOut
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+
+// --- Types & Interfaces ---
+
+interface InventoryItem {
+  id: string;
+  name: string;
+  sku: string;
+  stock: number;
+  rack: string;
+  category: string;
+  status: 'healthy' | 'low' | 'critical';
+}
+
+interface LogEntry {
+  id: string;
+  timestamp: string;
+  command: string;
+  match?: string;
+  status: 'success' | 'not_found' | 'error';
+}
+
+// --- Mock Data ---
+
+const INITIAL_INVENTORY: InventoryItem[] = [
+  { id: '1', name: 'Pneumatic Valve 12V', sku: 'PV-12V-001', stock: 42, rack: 'ZONE-A / R04', category: 'Actuators', status: 'healthy' },
+  { id: '2', name: 'Titanium Fastener 45mm', sku: 'TF-45-AERO', stock: 1240, rack: 'ZONE-A / R12', category: 'Fasteners', status: 'healthy' },
+  { id: '3', name: 'Coolant Pump X-2', sku: 'CP-X2-IND', stock: 8, rack: 'ZONE-C / R04', category: 'Pumps', status: 'critical' },
+  { id: '4', name: 'Hydraulic Fluid', sku: 'HF-992-X', stock: 15, rack: 'ZONE-B / R09', category: 'Fluids', status: 'low' },
+  { id: '5', name: 'Hex Bolts M8', sku: 'HB-M8-ST', stock: 4800, rack: 'ZONE-D / R22', category: 'Fasteners', status: 'healthy' },
+  { id: '6', name: 'Standard Gaskets Kit', sku: 'SG-F01-KIT', stock: 250, rack: 'ZONE-F / R01', category: 'Kits', status: 'low' },
+];
+
+// --- Main Application Component ---
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'inventory' | 'voice' | 'logs' | 'settings'>('voice');
+  const [inventory, setInventory] = useState<InventoryItem[]>(INITIAL_INVENTORY);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceResult, setVoiceResult] = useState<InventoryItem | null>(null);
+  const [transcript, setTranscript] = useState('');
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem('mcr_sheet_url') || '');
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // --- Data Initialization (Google Sheets Integration) ---
+
+  const fetchData = async (url: string) => {
+    setIsSyncing(true);
+    try {
+      // Jika URL kosong, coba panggil API lokal
+      const targetUrl = url || '/api/inventory';
+      const response = await fetch(targetUrl);
+      const data = await response.json();
+      
+      if (Array.isArray(data)) {
+        setInventory(data);
+      } else if (data.message) {
+        console.log('Backend Response:', data.message);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (sheetUrl) {
+      fetchData(sheetUrl);
+    }
+  }, []);
+
+  const handleSaveUrl = () => {
+    localStorage.setItem('mcr_sheet_url', sheetUrl);
+    fetchData(sheetUrl);
+    alert('URL tersimpan dan sinkronisasi dimulai.');
+  };
+
+  // --- Update Data ke Google Sheets ---
+  const updateSheetData = async (sku: string, newStock: number) => {
+    if (!sheetUrl) return;
+    try {
+      await fetch(sheetUrl, {
+        method: 'POST',
+        mode: 'no-cors', // Penting untuk Google Apps Script POST
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sku, newStock })
+      });
+      // Update state lokal setelah berhasil
+      setInventory(prev => prev.map(item => 
+        item.sku === sku ? { ...item, stock: newStock } : item
+      ));
+    } catch (error) {
+      console.error('Error updating sheet:', error);
+    }
+  };
+
+  // --- Voice Recognition Setup ---
+  
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'id-ID'; // Set to Indonesian
+
+      recognitionRef.current.onresult = (event: any) => {
+        const result = event.results[0][0].transcript;
+        setTranscript(result);
+        handleVoiceSearch(result);
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error', event.error);
+        setIsListening(false);
+      };
+    }
+  }, []);
+
+  // --- Logic: Voice Search & Matching ---
+
+  const handleVoiceSearch = (text: string) => {
+    const lowerText = text.toLowerCase();
+    
+    // Daftar kata-kata pengisi (filler words) yang akan diabaikan
+    const fillerWords = ['cari', 'tampilkan', 'ada', 'berapa', 'stok', 'dimana', 'lokasi', 'barang', 'tolong', 'cek', 'di', 'rak', 'unit'];
+    
+    // Membersihkan transcript dari kata pengisi untuk mendapatkan keyword murni
+    const keywords = lowerText.split(' ').filter(word => !fillerWords.includes(word) && word.length > 2);
+    
+    console.log('Keywords detected:', keywords);
+
+    // Logika pencarian: Mencari item yang mengandung keyword terbanyak atau kecocokan parsial
+    let match = inventory.find(item => {
+      const itemName = item.name.toLowerCase();
+      const itemSku = item.sku.toLowerCase();
+      
+      // 1. Cek apakah keyword murni ada di nama barang (Partial Match)
+      const hasKeywordMatch = keywords.some(kw => itemName.includes(kw) || itemSku.includes(kw));
+      
+      // 2. Cek apakah seluruh kalimat mengandung nama barang (Original Logic)
+      const hasFullMatch = lowerText.includes(itemName);
+      
+      return hasKeywordMatch || hasFullMatch;
+    });
+
+    if (match) {
+      setVoiceResult(match);
+      if (voiceEnabled) {
+        speak(`Barang ditemukan. ${match.name} berada di ${match.rack}. Stok saat ini ${match.stock} unit.`);
+      }
+      addLog(text, match.name, 'success');
+    } else {
+      setVoiceResult(null);
+      if (voiceEnabled) {
+        speak('Maaf, barang tidak ditemukan dalam sistem.');
+      }
+      addLog(text, undefined, 'not_found');
+    }
+  };
+
+  const speak = (text: string) => {
+    if (!window.speechSynthesis) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'id-ID';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const addLog = (command: string, match?: string, status: LogEntry['status'] = 'success') => {
+    const newLog: LogEntry = {
+      id: Date.now().toString(),
+      timestamp: new Date().toLocaleTimeString(),
+      command,
+      match,
+      status
+    };
+    setLogs(prev => [newLog, ...prev].slice(0, 50));
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+    } else {
+      setTranscript('');
+      setVoiceResult(null);
+      recognitionRef.current?.start();
+      setIsListening(true);
+    }
+  };
+
+  // --- Filtered Inventory ---
+  
+  const filteredInventory = useMemo(() => {
+    return inventory.filter(item => 
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.rack.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [inventory, searchQuery]);
+
+  // --- UI Components ---
+
+  const NavButton = ({ tab, icon: Icon, label }: { tab: typeof activeTab, icon: any, label: string }) => (
+    <button 
+      onClick={() => setActiveTab(tab)}
+      className={`relative flex flex-col items-center gap-1 transition-all duration-300 ${
+        activeTab === tab ? 'text-amber-500' : 'text-slate-400 hover:text-white'
+      }`}
+    >
+      <Icon size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />
+      <span className="text-[10px] font-bold uppercase tracking-widest">{label}</span>
+      {activeTab === tab && (
+        <motion.div 
+          layoutId="nav-indicator"
+          className="absolute -bottom-2 w-1 h-1 bg-amber-500 rounded-full"
+        />
+      )}
+    </button>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#0B1221] text-[#dce2f8] font-sans selection:bg-amber-500/30">
+      {/* Header */}
+      <header className="fixed top-0 w-full h-16 bg-[#0B1221]/80 backdrop-blur-md z-50 flex items-center justify-between px-6 border-b border-white/5">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-amber-500/10 rounded-lg">
+            <Package className="text-amber-500" size={20} />
+          </div>
+          <h1 className="text-sm font-black tracking-[0.2em] uppercase text-amber-500">MCR Inventory</h1>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 rounded-full">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">System Ready</span>
+          </div>
+          <div className="w-8 h-8 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden">
+            <User size={16} className="text-slate-400" />
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="pt-24 pb-32 px-6 max-w-4xl mx-auto">
+        <AnimatePresence mode="wait">
+          {activeTab === 'voice' && (
+            <motion.div 
+              key="voice"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex flex-col items-center gap-12"
+            >
+              <div className="text-center space-y-2">
+                <h2 className="text-3xl font-extrabold tracking-tight">Voice Command</h2>
+                <p className="text-slate-400 text-sm">Sebutkan nama barang untuk mencari lokasi</p>
+              </div>
+
+              {/* Mic Button */}
+              <div className="relative">
+                <AnimatePresence>
+                  {isListening && (
+                    <motion.div 
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1.5, opacity: 0.2 }}
+                      exit={{ scale: 0.8, opacity: 0 }}
+                      transition={{ repeat: Infinity, duration: 1.5 }}
+                      className="absolute inset-0 bg-amber-500 rounded-full"
+                    />
+                  )}
+                </AnimatePresence>
+                <button 
+                  onClick={toggleListening}
+                  className={`relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
+                    isListening 
+                      ? 'bg-amber-500 text-[#0B1221] shadow-[0_0_40px_rgba(245,158,11,0.4)]' 
+                      : 'bg-[#162032] text-amber-500 border border-amber-500/20 hover:border-amber-500/50'
+                  }`}
+                >
+                  <Mic size={40} strokeWidth={2.5} />
+                </button>
+              </div>
+
+              <div className="w-full space-y-6">
+                {/* Transcript Display */}
+                <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 text-center min-h-20 flex items-center justify-center">
+                  {transcript ? (
+                    <p className="text-lg font-medium italic text-slate-300">"{transcript}"</p>
+                  ) : (
+                    <p className="text-slate-500 text-sm italic">Menunggu perintah suara...</p>
+                  )}
+                </div>
+
+                {/* Result Card */}
+                {voiceResult && (
+                  <motion.div 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="bg-amber-500 p-8 rounded-3xl text-[#0B1221] shadow-2xl shadow-amber-500/20"
+                  >
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Barang Ditemukan</span>
+                        <h3 className="text-3xl font-black tracking-tighter">{voiceResult.name}</h3>
+                      </div>
+                      <div className="bg-[#0B1221]/10 p-2 rounded-xl">
+                        <CheckCircle2 size={24} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Lokasi Rak</p>
+                        <p className="text-xl font-black">{voiceResult.rack}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Stok Saat Ini</p>
+                        <p className="text-xl font-black">{voiceResult.stock} Units</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'inventory' && (
+            <motion.div 
+              key="inventory"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="space-y-6"
+            >
+              <div className="flex flex-col gap-4">
+                <h2 className="text-2xl font-bold">Inventory List</h2>
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <input 
+                    type="text"
+                    placeholder="Cari nama, SKU, atau rak..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-[#162032] border-none rounded-xl py-4 pl-12 pr-4 text-sm focus:ring-2 focus:ring-amber-500/50 transition-all outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                {filteredInventory.map(item => (
+                  <div key={item.id} className="bg-[#162032] p-5 rounded-2xl border border-white/5 hover:border-amber-500/30 transition-all group">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-lg">{item.name}</h3>
+                          <span className="text-[10px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-400">{item.sku}</span>
+                        </div>
+                        <p className="text-xs text-slate-500 uppercase tracking-widest font-medium">{item.category}</p>
+                      </div>
+                      <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
+                        item.status === 'healthy' ? 'bg-emerald-500/10 text-emerald-500' :
+                        item.status === 'low' ? 'bg-amber-500/10 text-amber-500' :
+                        'bg-red-500/10 text-red-500'
+                      }`}>
+                        {item.status}
+                      </div>
+                    </div>
+                    <div className="mt-6 flex justify-between items-end">
+                      <div>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Lokasi</p>
+                        <p className="font-bold text-amber-500">{item.rack}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Stok</p>
+                        <p className="text-xl font-black">{item.stock}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'logs' && (
+            <motion.div 
+              key="logs"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="space-y-6"
+            >
+              <h2 className="text-2xl font-bold">Activity Logs</h2>
+              <div className="space-y-3">
+                {logs.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">Belum ada aktivitas suara</div>
+                ) : (
+                  logs.map(log => (
+                    <div key={log.id} className="bg-[#162032] p-4 rounded-xl border border-white/5 flex items-center gap-4">
+                      <div className={`p-2 rounded-lg ${
+                        log.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' :
+                        log.status === 'not_found' ? 'bg-amber-500/10 text-amber-500' :
+                        'bg-red-500/10 text-red-500'
+                      }`}>
+                        {log.status === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">"{log.command}"</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">
+                          {log.timestamp} • {log.status === 'success' ? `Matched: ${log.match}` : 'No Match Found'}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'settings' && (
+            <motion.div 
+              key="settings"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="space-y-8"
+            >
+              <h2 className="text-2xl font-bold">Settings</h2>
+              
+              {/* Profile Card */}
+              <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 flex items-center gap-6">
+                <div className="w-16 h-16 rounded-2xl bg-amber-500 flex items-center justify-center text-[#0B1221]">
+                  <User size={32} strokeWidth={2.5} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold">Alex Vanguard</h3>
+                  <p className="text-slate-400 text-sm">Lead Logistics Engineer</p>
+                  <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mt-1 block">ID: 77-ALPHA</span>
+                </div>
+              </div>
+
+              {/* Google Sheets Integration */}
+              <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 space-y-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <Database className="text-amber-500" size={20} />
+                  <h3 className="font-bold">Google Sheets API</h3>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Masukkan URL Web App dari Google Apps Script Anda untuk sinkronisasi data inventory secara real-time.
+                </p>
+                <div className="space-y-3">
+                  <input 
+                    type="text"
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    value={sheetUrl}
+                    onChange={(e) => setSheetUrl(e.target.value)}
+                    className="w-full bg-[#0B1221] border border-white/10 rounded-xl py-3 px-4 text-xs font-mono text-amber-500 focus:ring-1 focus:ring-amber-500 transition-all outline-none"
+                  />
+                  <button 
+                    onClick={handleSaveUrl}
+                    disabled={isSyncing}
+                    className="w-full py-3 bg-amber-500 text-[#0B1221] rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 hover:bg-amber-400 transition-all disabled:opacity-50"
+                  >
+                    {isSyncing ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    {isSyncing ? 'Syncing...' : 'Save & Sync Data'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div className="space-y-4">
+                <div className="bg-[#162032] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="p-2 bg-slate-800 rounded-lg text-slate-400">
+                      {voiceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                    </div>
+                    <div>
+                      <p className="font-bold">Voice Feedback</p>
+                      <p className="text-xs text-slate-500">Bacakan hasil pencarian otomatis</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setVoiceEnabled(!voiceEnabled)}
+                    className={`w-12 h-6 rounded-full relative transition-all duration-300 ${voiceEnabled ? 'bg-amber-500' : 'bg-slate-700'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 ${voiceEnabled ? 'right-1' : 'left-1'}`} />
+                  </button>
+                </div>
+              </div>
+
+              <button className="w-full py-4 bg-red-500/10 text-red-500 rounded-2xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 hover:bg-red-500/20 transition-all">
+                <LogOut size={16} />
+                Logout Session
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* Floating Bottom Navigation */}
+      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-[#162032]/80 backdrop-blur-xl border border-white/5 rounded-full py-4 px-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] z-50">
+        <div className="flex justify-between items-center">
+          <NavButton tab="inventory" icon={Package} label="Items" />
+          <NavButton tab="voice" icon={Mic} label="Voice" />
+          <NavButton tab="logs" icon={History} label="Logs" />
+          <NavButton tab="settings" icon={Settings} label="Config" />
+        </div>
+      </nav>
+    </div>
+  );
+}
