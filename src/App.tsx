@@ -231,27 +231,76 @@ export default function App() {
   };
 
   const toggleListening = () => {
-    setErrorMessage(null); // Reset error saat mencoba lagi
+    setErrorMessage(null);
 
     if (isListening) {
-      recognitionRef.current?.stop();
-    } else {
-      // Re-inisialisasi untuk mobile jika ref hilang
-      if (!recognitionRef.current) {
-        recognitionRef.current = initRecognition();
-      }
-      
       try {
-        setTranscript('');
-        setVoiceResult(null);
-        recognitionRef.current?.start();
-        setIsListening(true);
-      } catch (e) {
-        console.error('Start error:', e);
-        // Jika error karena objek sudah jalan, stop dulu
         recognitionRef.current?.stop();
+      } catch (e) {}
+      setIsListening(false);
+      return;
+    }
+
+    // --- KHUSUS IOS: Unlock Audio & Speech ---
+    // Memancing izin audio iOS agar sistem suara terbuka
+    if (window.speechSynthesis) {
+      const msg = new SpeechSynthesisUtterance('');
+      window.speechSynthesis.speak(msg);
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      setErrorMessage('Browser ini tidak mendukung fitur suara.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      
+      // Konfigurasi standar
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'id-ID';
+
+      // Event Handlers
+      recognition.onstart = () => {
+        setIsListening(true);
+        setTranscript('Mendengarkan...');
+      };
+
+      recognition.onresult = (event: any) => {
+        const result = event.results[0][0].transcript;
+        setTranscript(result);
+        handleVoiceSearch(result);
+      };
+
+      recognition.onend = () => {
         setIsListening(false);
-      }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Recognition Error:', event.error);
+        setIsListening(false);
+        
+        if (event.error === 'not-allowed') {
+          setErrorMessage('Izin mikrofon ditolak. Cek Pengaturan > Safari > Mikrofon.');
+        } else if (event.error === 'no-speech') {
+          setErrorMessage('Suara tidak terdengar. Coba lagi.');
+        } else {
+          setErrorMessage(`Gagal: ${event.error}`);
+        }
+      };
+
+      // Simpan ref dan jalankan SEGERA (Synchronous)
+      recognitionRef.current = recognition;
+      setVoiceResult(null);
+      recognition.start();
+      
+    } catch (error) {
+      console.error('Critical Start Error:', error);
+      setErrorMessage('Gagal menjalankan perekam suara.');
+      setIsListening(false);
     }
   };
 
