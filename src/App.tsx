@@ -65,6 +65,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem('mcr_sheet_url') || '');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // --- Data Initialization (Google Sheets Integration) ---
 
@@ -123,29 +124,50 @@ export default function App() {
   
   const recognitionRef = useRef<any>(null);
 
-  useEffect(() => {
+  const initRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = 'id-ID'; // Set to Indonesian
-
-      recognitionRef.current.onresult = (event: any) => {
-        const result = event.results[0][0].transcript;
-        setTranscript(result);
-        handleVoiceSearch(result);
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('Speech recognition error', event.error);
-        setIsListening(false);
-      };
+    
+    if (!SpeechRecognition) {
+      setErrorMessage('Browser Anda tidak mendukung Web Speech API. Gunakan Chrome (Android) atau Safari (iOS).');
+      return null;
     }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'id-ID';
+
+    recognition.onresult = (event: any) => {
+      const result = event.results[0][0].transcript;
+      setTranscript(result);
+      handleVoiceSearch(result);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error', event.error);
+      setIsListening(false);
+      
+      // Pesan error yang lebih ramah user
+      if (event.error === 'not-allowed') {
+        setErrorMessage('Izin mikrofon ditolak. Silakan cek pengaturan browser HP Anda.');
+      } else if (event.error === 'network') {
+        setErrorMessage('Masalah koneksi internet.');
+      } else if (event.error === 'no-speech') {
+        setErrorMessage('Tidak ada suara yang terdengar.');
+      } else {
+        setErrorMessage(`Error: ${event.error}`);
+      }
+    };
+
+    return recognition;
+  };
+
+  useEffect(() => {
+    recognitionRef.current = initRecognition();
   }, []);
 
   // --- Logic: Voice Search & Matching ---
@@ -209,13 +231,27 @@ export default function App() {
   };
 
   const toggleListening = () => {
+    setErrorMessage(null); // Reset error saat mencoba lagi
+
     if (isListening) {
       recognitionRef.current?.stop();
     } else {
-      setTranscript('');
-      setVoiceResult(null);
-      recognitionRef.current?.start();
-      setIsListening(true);
+      // Re-inisialisasi untuk mobile jika ref hilang
+      if (!recognitionRef.current) {
+        recognitionRef.current = initRecognition();
+      }
+      
+      try {
+        setTranscript('');
+        setVoiceResult(null);
+        recognitionRef.current?.start();
+        setIsListening(true);
+      } catch (e) {
+        console.error('Start error:', e);
+        // Jika error karena objek sudah jalan, stop dulu
+        recognitionRef.current?.stop();
+        setIsListening(false);
+      }
     }
   };
 
