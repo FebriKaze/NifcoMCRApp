@@ -174,8 +174,11 @@ export default function App() {
   // --- Logic: Voice Search & Matching ---
 
   const handleVoiceSearch = (text: string) => {
-    const lowerText = text.toLowerCase();
+    console.log('Processing voice search for:', text);
+    const lowerText = text.toLowerCase().trim();
     
+    if (!lowerText) return;
+
     // Daftar kata-kata pengisi (filler words) yang akan diabaikan
     const fillerWords = ['cari', 'tampilkan', 'ada', 'berapa', 'stok', 'dimana', 'lokasi', 'barang', 'tolong', 'cek', 'di', 'rak', 'unit'];
     
@@ -190,21 +193,26 @@ export default function App() {
       const itemSku = item.sku.toLowerCase();
       
       // 1. Cek apakah keyword murni ada di nama barang (Partial Match)
-      const hasKeywordMatch = keywords.some(kw => itemName.includes(kw) || itemSku.includes(kw));
+      const hasKeywordMatch = keywords.length > 0 && keywords.some(kw => itemName.includes(kw) || itemSku.includes(kw));
       
-      // 2. Cek apakah seluruh kalimat mengandung nama barang (Original Logic)
-      const hasFullMatch = lowerText.includes(itemName);
+      // 2. Cek apakah seluruh kalimat mengandung nama barang atau SKU
+      const hasFullMatch = lowerText.includes(itemName) || lowerText.includes(itemSku);
       
-      return hasKeywordMatch || hasFullMatch;
+      // 3. Cek apakah nama barang mengandung seluruh kalimat (kebalikan dari #2)
+      const hasReverseMatch = itemName.includes(lowerText) || itemSku.includes(lowerText);
+      
+      return hasKeywordMatch || hasFullMatch || hasReverseMatch;
     });
 
     if (match) {
+      console.log('Match found:', match.name);
       setVoiceResult(match);
       if (voiceEnabled) {
         speak(`Barang ditemukan. ${match.name} berada di ${match.rack}. Stok saat ini ${match.stock} unit.`);
       }
       addLog(text, match.name, 'success');
     } else {
+      console.log('No match found for:', text);
       setVoiceResult(null);
       if (voiceEnabled) {
         speak('Maaf, barang tidak ditemukan dalam sistem.');
@@ -215,9 +223,20 @@ export default function App() {
 
   const speak = (text: string) => {
     if (!window.speechSynthesis) return;
+    
+    // Batalkan suara sebelumnya agar tidak menumpuk (penting untuk iOS)
+    window.speechSynthesis.cancel();
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'id-ID';
-    window.speechSynthesis.speak(utterance);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    // Tambahkan sedikit delay untuk iOS agar sistem audio siap
+    setTimeout(() => {
+      window.speechSynthesis.speak(utterance);
+    }, 100);
   };
 
   const addLog = (command: string, match?: string, status: LogEntry['status'] = 'success') => {
@@ -259,18 +278,28 @@ export default function App() {
 
     try {
       const recognition = new SpeechRecognition();
+      let lastProcessedTranscript = '';
+      let hasTriggeredSearch = false;
       
       recognition.continuous = false;
-      recognition.interimResults = true; // Aktifkan agar teks muncul saat bicara
+      recognition.interimResults = true;
       recognition.lang = 'id-ID';
+
+      const triggerSearch = (text: string) => {
+        if (hasTriggeredSearch || !text.trim()) return;
+        hasTriggeredSearch = true;
+        setTranscript(text);
+        handleVoiceSearch(text);
+      };
 
       const resetSilenceTimer = (final = false) => {
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         if (!final) {
           silenceTimerRef.current = setTimeout(() => {
-            console.log('Silence detected, stopping...');
+            console.log('Silence detected, processing last transcript...');
+            triggerSearch(lastProcessedTranscript);
             recognition.stop();
-          }, 1500); // Berhenti otomatis setelah 1.5 detik diam
+          }, 1500);
         }
       };
 
@@ -298,11 +327,15 @@ export default function App() {
           }
         }
 
+        const currentText = finalTranscript || interimTranscript;
+        if (currentText) {
+          lastProcessedTranscript = currentText;
+        }
+
         if (finalTranscript) {
           resetSilenceTimer(true);
-          setTranscript(finalTranscript);
-          handleVoiceSearch(finalTranscript);
-          recognition.stop(); // Paksa stop setelah dapat hasil final
+          triggerSearch(finalTranscript);
+          recognition.stop();
         } else if (interimTranscript) {
           setTranscript(interimTranscript + '...');
           resetSilenceTimer();
@@ -311,6 +344,10 @@ export default function App() {
 
       recognition.onend = () => {
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        // Jika belum sempat trigger search (misal karena timeout), paksa trigger sekarang
+        if (!hasTriggeredSearch && lastProcessedTranscript) {
+          triggerSearch(lastProcessedTranscript);
+        }
         setIsListening(false);
       };
 
@@ -322,7 +359,10 @@ export default function App() {
         if (event.error === 'not-allowed') {
           setErrorMessage('Izin mikrofon ditolak. Cek Pengaturan > Safari > Mikrofon.');
         } else if (event.error === 'no-speech') {
-          setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
+          // Abaikan error no-speech jika kita sudah punya transcript sementara
+          if (!lastProcessedTranscript) {
+            setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
+          }
         } else if (event.error === 'network') {
           setErrorMessage('Koneksi internet bermasalah.');
         } else {
