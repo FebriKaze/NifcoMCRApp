@@ -312,6 +312,18 @@ export default function App() {
               </div>
 
               <div className="w-full space-y-6">
+                {/* Error Message Display */}
+                {errorMessage && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-center gap-3 text-red-500 text-xs"
+                  >
+                    <AlertTriangle size={16} />
+                    <p>{errorMessage}</p>
+                  </motion.div>
+                )}
+
                 {/* Transcript Display */}
                 <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 text-center min-h-20 flex items-center justify-center">
                   {transcript ? (
