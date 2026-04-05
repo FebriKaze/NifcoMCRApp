@@ -44,7 +44,7 @@ interface LogEntry {
 // --- Mock Data ---
 
 const INITIAL_INVENTORY: InventoryItem[] = [
-  { id: '1', name: 'Toyota Bumper', sku: 'T11KW-BO', stock: 42, rack: '7', category: 'Actuators', status: 'healthy' },
+  { id: '1', name: 'Toyota Bumper', sku: 'T11KW-BO', stock: 42, rack: 'Rack-7', category: 'Actuators', status: 'healthy' },
   { id: '2', name: 'Titanium Fastener 45mm', sku: 'TF-45-AERO', stock: 1240, rack: 'ZONE-A / R12', category: 'Fasteners', status: 'healthy' },
   { id: '3', name: 'Coolant Pump X-2', sku: 'CP-X2-IND', stock: 8, rack: 'ZONE-C / R04', category: 'Pumps', status: 'critical' },
   { id: '4', name: 'Hydraulic Fluid', sku: 'HF-992-X', stock: 15, rack: 'ZONE-B / R09', category: 'Fluids', status: 'low' },
