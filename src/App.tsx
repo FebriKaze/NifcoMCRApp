@@ -235,14 +235,14 @@ export default function App() {
 
     if (isListening) {
       try {
-        recognitionRef.current?.stop();
+        recognitionRef.current?.abort(); // Abort lebih keras daripada stop
       } catch (e) {}
       setIsListening(false);
+      setTranscript('');
       return;
     }
 
     // --- KHUSUS IOS: Unlock Audio & Speech ---
-    // Memancing izin audio iOS agar sistem suara terbuka
     if (window.speechSynthesis) {
       const msg = new SpeechSynthesisUtterance('');
       window.speechSynthesis.speak(msg);
@@ -258,21 +258,31 @@ export default function App() {
     try {
       const recognition = new SpeechRecognition();
       
-      // Konfigurasi standar
       recognition.continuous = false;
-      recognition.interimResults = false;
+      recognition.interimResults = true; // Aktifkan agar teks muncul saat bicara
       recognition.lang = 'id-ID';
 
-      // Event Handlers
       recognition.onstart = () => {
         setIsListening(true);
-        setTranscript('Mendengarkan...');
+        setTranscript('Mulai mendengarkan...');
+      };
+
+      recognition.onsoundstart = () => {
+        setTranscript('Suara terdeteksi...');
       };
 
       recognition.onresult = (event: any) => {
-        const result = event.results[0][0].transcript;
-        setTranscript(result);
-        handleVoiceSearch(result);
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcriptText = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            setTranscript(transcriptText);
+            handleVoiceSearch(transcriptText);
+          } else {
+            interimTranscript += transcriptText;
+            setTranscript(interimTranscript + '...');
+          }
+        }
       };
 
       recognition.onend = () => {
@@ -286,13 +296,14 @@ export default function App() {
         if (event.error === 'not-allowed') {
           setErrorMessage('Izin mikrofon ditolak. Cek Pengaturan > Safari > Mikrofon.');
         } else if (event.error === 'no-speech') {
-          setErrorMessage('Suara tidak terdengar. Coba lagi.');
+          setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
+        } else if (event.error === 'network') {
+          setErrorMessage('Koneksi internet bermasalah.');
         } else {
-          setErrorMessage(`Gagal: ${event.error}`);
+          setErrorMessage(`Gagal (${event.error}). Coba refresh halaman.`);
         }
       };
 
-      // Simpan ref dan jalankan SEGERA (Synchronous)
       recognitionRef.current = recognition;
       setVoiceResult(null);
       recognition.start();
