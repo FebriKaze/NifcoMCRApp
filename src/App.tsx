@@ -56,7 +56,7 @@ export default function App() {
   const [transcript, setTranscript] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sheetUrl, setSheetUrl] = useState(() => localStorage.getItem('mcr_sheet_url') || '');
+  const [sheetUrl, setSheetUrl] = useState('https://script.google.com/macros/s/AKfycbz1kWrk2PdmbnI1vbMFWXxd8sxIRQ74jB9SIJiDJr2JOMOFvrivLrsAzzP6VgXcpzp_/exec');
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -670,8 +670,9 @@ export default function App() {
                   <User size={32} strokeWidth={2.5} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold">Alvin P</h3>
-                  <p className="text-slate-400 text-sm">Junior Web</p>
+                  <h3 className="text-xl font-bold">Alex Vanguard</h3>
+                  <p className="text-slate-400 text-sm">Lead Logistics Engineer</p>
+                  <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mt-1 block">ID: 77-ALPHA</span>
                 </div>
               </div>
 
