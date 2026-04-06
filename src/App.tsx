@@ -263,10 +263,13 @@ export default function App() {
   const speak = (text: string) => {
     if (!window.speechSynthesis) return;
     
+    // Trik agar "KW" tidak dibaca "kilowatt" tapi dibaca per huruf "K W"
+    const sanitizedText = text.replace(/KW/g, 'K W').replace(/kw/g, 'k w');
+
     // Batalkan suara sebelumnya agar tidak menumpuk (penting untuk iOS)
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(sanitizedText);
     utterance.lang = 'id-ID';
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
@@ -662,9 +665,8 @@ export default function App() {
                   <User size={32} strokeWidth={2.5} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold">Alex Vanguard</h3>
-                  <p className="text-slate-400 text-sm">Lead Logistics Engineer</p>
-                  <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mt-1 block">ID: 77-ALPHA</span>
+                  <h3 className="text-xl font-bold">Alvin P</h3>
+                  <p className="text-slate-400 text-sm">QC MCR</p>
                 </div>
               </div>
 
