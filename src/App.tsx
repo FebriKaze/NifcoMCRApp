@@ -264,7 +264,11 @@ export default function App() {
     if (!window.speechSynthesis) return;
     
     // Trik agar "KW" tidak dibaca "kilowatt" tapi dibaca per huruf "K W"
-    const sanitizedText = text.replace(/KW/g, 'K W').replace(/kw/g, 'k w');
+    // Dan hapus tanda "-" agar tidak dibaca "sampai"
+    const sanitizedText = text
+      .replace(/KW/g, 'K W')
+      .replace(/kw/g, 'k w')
+      .replace(/-/g, ' ');
 
     // Batalkan suara sebelumnya agar tidak menumpuk (penting untuk iOS)
     window.speechSynthesis.cancel();
