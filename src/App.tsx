@@ -29,8 +29,8 @@ interface InventoryItem {
   sku: string;
   stock: number;
   rack: string;
-  category: string;
-  status: 'healthy' | 'low' | 'critical';
+  description?: string;
+  status?: 'healthy' | 'low' | 'critical';
 }
 
 interface LogEntry {
@@ -43,14 +43,7 @@ interface LogEntry {
 
 // --- Mock Data ---
 
-const INITIAL_INVENTORY: InventoryItem[] = [
-  { id: '1', name: 'Toyota Bumper', sku: 'T11KW-BO', stock: 42, rack: 'Rack-7', category: 'Actuators', status: 'healthy' },
-  { id: '2', name: 'Titanium Fastener 45mm', sku: 'TF-45-AERO', stock: 1240, rack: 'ZONE-A / R12', category: 'Fasteners', status: 'healthy' },
-  { id: '3', name: 'Coolant Pump X-2', sku: 'CP-X2-IND', stock: 8, rack: 'ZONE-C / R04', category: 'Pumps', status: 'critical' },
-  { id: '4', name: 'Hydraulic Fluid', sku: 'HF-992-X', stock: 15, rack: 'ZONE-B / R09', category: 'Fluids', status: 'low' },
-  { id: '5', name: 'Hex Bolts M8', sku: 'HB-M8-ST', stock: 4800, rack: 'ZONE-D / R22', category: 'Fasteners', status: 'healthy' },
-  { id: '6', name: 'Standard Gaskets Kit', sku: 'SG-F01-KIT', stock: 250, rack: 'ZONE-F / R01', category: 'Kits', status: 'low' },
-];
+const INITIAL_INVENTORY: InventoryItem[] = [];
 
 // --- Main Application Component ---
 
@@ -69,21 +62,30 @@ export default function App() {
 
   // --- Data Initialization (Google Sheets Integration) ---
 
-  const fetchData = async (url: string) => {
+  const fetchData = async () => {
+    if (!sheetUrl) {
+      setErrorMessage('Silakan masukkan URL Google Apps Script di tab Config.');
+      return;
+    }
     setIsSyncing(true);
+    setErrorMessage(null);
     try {
-      // Jika URL kosong, coba panggil API lokal
-      const targetUrl = url || '/api/inventory';
-      const response = await fetch(targetUrl);
+      const response = await fetch(sheetUrl);
       const data = await response.json();
       
       if (Array.isArray(data)) {
-        setInventory(data);
-      } else if (data.message) {
-        console.log('Backend Response:', data.message);
+        // Tambahkan status berdasarkan stok
+        const enrichedData = data.map(item => ({
+          ...item,
+          status: item.stock < 10 ? 'critical' : item.stock < 50 ? 'low' : 'healthy'
+        }));
+        setInventory(enrichedData);
+      } else {
+        setErrorMessage('Gagal mengambil data. Pastikan URL Web App benar.');
       }
     } catch (error) {
       console.error('Error fetching data:', error);
+      setErrorMessage('Terjadi kesalahan koneksi ke Google Sheets.');
     } finally {
       setIsSyncing(false);
     }
@@ -91,32 +93,44 @@ export default function App() {
 
   useEffect(() => {
     if (sheetUrl) {
-      fetchData(sheetUrl);
+      fetchData();
     }
   }, []);
 
   const handleSaveUrl = () => {
     localStorage.setItem('mcr_sheet_url', sheetUrl);
-    fetchData(sheetUrl);
+    fetchData();
     alert('URL tersimpan dan sinkronisasi dimulai.');
   };
 
   // --- Update Data ke Google Sheets ---
-  const updateSheetData = async (sku: string, newStock: number) => {
-    if (!sheetUrl) return;
+  const updateStock = async (id: string, newStock: number) => {
+    if (!sheetUrl) return false;
+    setIsSyncing(true);
     try {
-      await fetch(sheetUrl, {
+      const response = await fetch(sheetUrl, {
         method: 'POST',
         mode: 'no-cors', // Penting untuk Google Apps Script POST
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sku, newStock })
+        body: JSON.stringify({ id, stock: newStock })
       });
-      // Update state lokal setelah berhasil
+      
+      // Karena no-cors, kita tidak bisa baca response body, 
+      // tapi kita asumsikan berhasil jika tidak ada error network
       setInventory(prev => prev.map(item => 
-        item.sku === sku ? { ...item, stock: newStock } : item
+        item.id === id ? { 
+          ...item, 
+          stock: newStock,
+          status: newStock < 10 ? 'critical' : newStock < 50 ? 'low' : 'healthy'
+        } : item
       ));
+      return true;
     } catch (error) {
-      console.error('Error updating sheet:', error);
+      console.error('Error updating stock:', error);
+      setErrorMessage('Gagal memperbarui stok.');
+      return false;
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -173,11 +187,36 @@ export default function App() {
 
   // --- Logic: Voice Search & Matching ---
 
-  const handleVoiceSearch = (text: string) => {
+  const handleVoiceSearch = async (text: string) => {
     console.log('Processing voice search for:', text);
     const lowerText = text.toLowerCase().trim();
     
     if (!lowerText) return;
+
+    // Deteksi perintah update stok
+    // Contoh: "update stok hex bolts jadi 50" atau "set stok hex bolts ke 50"
+    const updateMatch = lowerText.match(/(?:update|set|ubah|ganti)\s+stok\s+(.+)\s+(?:jadi|ke|menjadi)\s+(\d+)/i);
+    
+    if (updateMatch) {
+      const itemNameQuery = updateMatch[1].trim();
+      const newStock = parseInt(updateMatch[2]);
+      
+      const itemToUpdate = inventory.find(item => 
+        item.name.toLowerCase().includes(itemNameQuery) || 
+        item.sku.toLowerCase().includes(itemNameQuery)
+      );
+
+      if (itemToUpdate) {
+        const success = await updateStock(itemToUpdate.id, newStock);
+        if (success) {
+          if (voiceEnabled) {
+            speak(`Stok ${itemToUpdate.name} berhasil diperbarui menjadi ${newStock} unit.`);
+          }
+          addLog(text, itemToUpdate.name, 'success');
+        }
+        return;
+      }
+    }
 
     // Daftar kata-kata pengisi (filler words) yang akan diabaikan
     const fillerWords = ['cari', 'tampilkan', 'ada', 'berapa', 'stok', 'dimana', 'lokasi', 'barang', 'tolong', 'cek', 'di', 'rak', 'unit'];
@@ -557,7 +596,6 @@ export default function App() {
                           <h3 className="font-bold text-lg">{item.name}</h3>
                           <span className="text-[10px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-400">{item.sku}</span>
                         </div>
-                        <p className="text-xs text-slate-500 uppercase tracking-widest font-medium">{item.category}</p>
                       </div>
                       <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
                         item.status === 'healthy' ? 'bg-emerald-500/10 text-emerald-500' :
@@ -632,22 +670,23 @@ export default function App() {
                   <User size={32} strokeWidth={2.5} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold">Alex Vanguard</h3>
-                  <p className="text-slate-400 text-sm">Lead Logistics Engineer</p>
-                  <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mt-1 block">ID: 77-ALPHA</span>
+                  <h3 className="text-xl font-bold">Alvin P</h3>
+                  <p className="text-slate-400 text-sm">Junior Web</p>
                 </div>
               </div>
 
-              {/* Google Sheets Integration */}
+              {/* Google Sheets Integration Status */}
               <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 space-y-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <Database className="text-amber-500" size={20} />
-                  <h3 className="font-bold">Google Sheets API</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-3">
+                    <Database className="text-amber-500" size={20} />
+                    <h3 className="font-bold">Google Sheets API</h3>
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${inventory.length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                 </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Masukkan URL Web App dari Google Apps Script Anda untuk sinkronisasi data inventory secara real-time.
-                </p>
+                
                 <div className="space-y-3">
+                  <p className="text-xs text-slate-400">Masukkan URL Web App dari Google Apps Script:</p>
                   <input 
                     type="text"
                     placeholder="https://script.google.com/macros/s/.../exec"
@@ -663,6 +702,19 @@ export default function App() {
                     {isSyncing ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                     {isSyncing ? 'Syncing...' : 'Save & Sync Data'}
                   </button>
+                </div>
+
+                <div className="bg-[#0B1221] p-4 rounded-xl border border-white/5 space-y-3">
+                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    <span>Status Koneksi</span>
+                    <span className={inventory.length > 0 ? 'text-emerald-500' : 'text-red-500'}>
+                      {inventory.length > 0 ? 'Connected' : 'Disconnected'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    <span>Total Items</span>
+                    <span className="text-amber-500">{inventory.length}</span>
+                  </div>
                 </div>
               </div>
 
