@@ -458,7 +458,7 @@ export default function App() {
           <div className="p-2 bg-amber-500/10 rounded-lg">
             <Package className="text-amber-500" size={20} />
           </div>
-          <h1 className="text-sm font-black tracking-[0.2em] uppercase text-amber-500">MCR Inventory</h1>
+          <h1 className="text-sm font-black tracking-[0.2em] uppercase text-amber-500">QC MCR</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 rounded-full">
@@ -609,10 +609,6 @@ export default function App() {
                       <div>
                         <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Lokasi</p>
                         <p className="font-bold text-amber-500">{item.rack}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Stok</p>
-                        <p className="text-xl font-black">{item.stock}</p>
                       </div>
                     </div>
                   </div>
