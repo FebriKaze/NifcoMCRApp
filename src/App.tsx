@@ -555,10 +555,6 @@ export default function App() {
                         <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Lokasi Rak</p>
                         <p className="text-xl font-black">{voiceResult.rack}</p>
                       </div>
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Stok Saat Ini</p>
-                        <p className="text-xl font-black">{voiceResult.stock} Units</p>
-                      </div>
                     </div>
                   </motion.div>
                 )}
