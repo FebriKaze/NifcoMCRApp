@@ -247,7 +247,7 @@ export default function App() {
       console.log('Match found:', match.name);
       setVoiceResult(match);
       if (voiceEnabled) {
-        speak(`Barang ditemukan. ${match.name} berada di ${match.rack}. Stok saat ini ${match.stock} unit.`);
+        speak(`Barang ditemukan. ${match.name} berada di ${match.rack}.`);
       }
       addLog(text, match.name, 'success');
     } else {
