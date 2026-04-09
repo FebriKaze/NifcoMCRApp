@@ -30,7 +30,7 @@ interface InventoryItem {
   stock: number;
   rack: string;
   description?: string;
-  status?: 'healthy' | 'low' | 'critical';
+  status?: 'Nifco Product' | 'low' | 'critical';
 }
 
 interface LogEntry {
@@ -77,7 +77,7 @@ export default function App() {
         // Tambahkan status berdasarkan stok
         const enrichedData = data.map(item => ({
           ...item,
-          status: item.stock < 10 ? 'critical' : item.stock < 50 ? 'low' : 'healthy'
+          status: item.stock < 10 ? 'critical' : item.stock < 50 ? 'low' : 'Nifco Product'
         }));
         setInventory(enrichedData);
       } else {
@@ -121,7 +121,7 @@ export default function App() {
         item.id === id ? { 
           ...item, 
           stock: newStock,
-          status: newStock < 10 ? 'critical' : newStock < 50 ? 'low' : 'healthy'
+          status: newStock < 10 ? 'critical' : newStock < 50 ? 'low' : 'Nifco Product'
         } : item
       ));
       return true;
@@ -442,8 +442,8 @@ export default function App() {
   const NavButton = ({ tab, icon: Icon, label }: { tab: typeof activeTab, icon: any, label: string }) => (
     <button 
       onClick={() => setActiveTab(tab)}
-      className={`relative flex flex-col items-center gap-1 transition-all duration-300 ${
-        activeTab === tab ? 'text-amber-500' : 'text-slate-400 hover:text-white'
+      className={`cursor-pointer relative flex flex-col items-center gap-1 transition-all duration-300 ${
+        activeTab === tab ? 'text-orange-500' : 'text-slate-400 hover:text-slate-800'
       }`}
     >
       <Icon size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />
@@ -451,29 +451,29 @@ export default function App() {
       {activeTab === tab && (
         <motion.div 
           layoutId="nav-indicator"
-          className="absolute -bottom-2 w-1 h-1 bg-amber-500 rounded-full"
+          className="absolute -bottom-2 w-1 h-1 bg-orange-500 rounded-full"
         />
       )}
     </button>
   );
 
   return (
-    <div className="min-h-screen bg-[#0B1221] text-[#dce2f8] font-sans selection:bg-amber-500/30">
+    <div className="min-h-screen bg-orange-500 text-orange-950 font-sans selection:bg-white/30">
       {/* Header */}
-      <header className="fixed top-0 w-full h-16 bg-[#0B1221]/80 backdrop-blur-md z-50 flex items-center justify-between px-6 border-b border-white/5">
+      <header className="fixed top-0 w-full h-16 bg-orange-500/90 backdrop-blur-md z-50 flex items-center justify-between px-6 border-b border-orange-400">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-amber-500/10 rounded-lg">
-            <Package className="text-amber-500" size={20} />
+          <div className="p-2 bg-white/20 rounded-lg">
+            <Package className="text-white" size={20} />
           </div>
-          <h1 className="text-sm font-black tracking-[0.2em] uppercase text-amber-500">QC MCR</h1>
+          <h1 className="text-sm font-black tracking-[0.2em] uppercase text-white">QC MCR</h1>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 rounded-full">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">System Ready</span>
+          <div className="flex items-center gap-2 px-3 py-1 bg-white/20 rounded-full">
+            <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span className="text-[10px] font-bold text-white uppercase tracking-widest">System Ready</span>
           </div>
-          <div className="w-8 h-8 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden">
-            <User size={16} className="text-slate-400" />
+          <div className="w-8 h-8 rounded-full bg-orange-600 border border-orange-400 flex items-center justify-center overflow-hidden">
+            <User size={16} className="text-white" />
           </div>
         </div>
       </header>
@@ -490,8 +490,8 @@ export default function App() {
               className="flex flex-col items-center gap-12"
             >
               <div className="text-center space-y-2">
-                <h2 className="text-3xl font-extrabold tracking-tight">Voice Command</h2>
-                <p className="text-slate-400 text-sm">Sebutkan nama barang untuk mencari lokasi</p>
+                <h2 className="text-3xl font-extrabold tracking-tight text-white">Voice Command</h2>
+                <p className="text-orange-100 text-sm">Sebutkan nama barang untuk mencari lokasi</p>
               </div>
 
               {/* Mic Button */}
@@ -509,10 +509,10 @@ export default function App() {
                 </AnimatePresence>
                 <button 
                   onClick={toggleListening}
-                  className={`relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
+                  className={`cursor-pointer relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
                     isListening 
-                      ? 'bg-amber-500 text-[#0B1221] shadow-[0_0_40px_rgba(245,158,11,0.4)]' 
-                      : 'bg-[#162032] text-amber-500 border border-amber-500/20 hover:border-amber-500/50'
+                      ? 'bg-white text-orange-500 shadow-[0_0_40px_rgba(255,255,255,0.4)]' 
+                      : 'bg-white text-orange-400 border border-transparent shadow-xl hover:shadow-2xl'
                   }`}
                 >
                   <Mic size={40} strokeWidth={2.5} />
@@ -533,11 +533,11 @@ export default function App() {
                 )}
 
                 {/* Transcript Display */}
-                <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 text-center min-h-20 flex items-center justify-center">
+                <div className="bg-white p-6 rounded-2xl shadow-xl border border-transparent text-center min-h-20 flex items-center justify-center">
                   {transcript ? (
-                    <p className="text-lg font-medium italic text-slate-300">"{transcript}"</p>
+                    <p className="text-lg font-medium italic text-orange-950">"{transcript}"</p>
                   ) : (
-                    <p className="text-slate-500 text-sm italic">Menunggu perintah suara...</p>
+                    <p className="text-slate-400 text-sm italic">Menunggu perintah suara...</p>
                   )}
                 </div>
 
@@ -546,21 +546,21 @@ export default function App() {
                   <motion.div 
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    className="bg-amber-500 p-8 rounded-3xl text-[#0B1221] shadow-2xl shadow-amber-500/20"
+                    className="bg-white p-8 rounded-3xl text-orange-950 shadow-xl"
                   >
                     <div className="flex justify-between items-start mb-6">
                       <div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Barang Ditemukan</span>
-                        <h3 className="text-3xl font-black tracking-tighter">{voiceResult.name}</h3>
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Barang Ditemukan</span>
+                        <h3 className="text-3xl font-black tracking-tighter text-slate-800">{voiceResult.name}</h3>
                       </div>
-                      <div className="bg-[#0B1221]/10 p-2 rounded-xl">
+                      <div className="bg-orange-100 p-2 rounded-xl text-orange-500">
                         <CheckCircle2 size={24} />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-6">
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Lokasi Rak</p>
-                        <p className="text-xl font-black">{voiceResult.rack}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Lokasi Rak</p>
+                        <p className="text-xl font-black text-orange-600">{voiceResult.rack}</p>
                       </div>
                     </div>
                   </motion.div>
@@ -577,41 +577,41 @@ export default function App() {
               className="space-y-6"
             >
               <div className="flex flex-col gap-4">
-                <h2 className="text-2xl font-bold">Inventory List</h2>
+                <h2 className="text-2xl font-bold text-white">Inventory List</h2>
                 <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                   <input 
                     type="text"
                     placeholder="Cari nama, SKU, atau rak..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-[#162032] border-none rounded-xl py-4 pl-12 pr-4 text-sm focus:ring-2 focus:ring-amber-500/50 transition-all outline-none"
+                    className="w-full bg-white text-orange-950 border-none shadow-xl rounded-xl py-4 pl-12 pr-4 text-sm focus:ring-2 focus:ring-white/80 transition-all outline-none placeholder:text-slate-400"
                   />
                 </div>
               </div>
 
               <div className="grid gap-4">
                 {filteredInventory.map(item => (
-                  <div key={item.id} className="bg-[#162032] p-5 rounded-2xl border border-white/5 hover:border-amber-500/30 transition-all group">
+                  <div key={item.id} className="cursor-pointer bg-white p-5 rounded-2xl shadow-lg border border-transparent hover:border-orange-200 transition-all group">
                     <div className="flex justify-between items-start">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-lg">{item.name}</h3>
-                          <span className="text-[10px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-400">{item.sku}</span>
+                          <h3 className="font-bold text-lg text-slate-800">{item.name}</h3>
+                          <span className="text-[10px] font-mono bg-slate-100 px-2 py-0.5 rounded text-slate-500">{item.sku}</span>
                         </div>
                       </div>
                       <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
-                        item.status === 'healthy' ? 'bg-emerald-500/10 text-emerald-500' :
-                        item.status === 'low' ? 'bg-amber-500/10 text-amber-500' :
-                        'bg-red-500/10 text-red-500'
+                        item.status === 'Nifco Product' ? 'bg-emerald-100 text-emerald-600' :
+                        item.status === 'low' ? 'bg-orange-100 text-orange-600' :
+                        'bg-red-100 text-red-600'
                       }`}>
                         {item.status}
                       </div>
                     </div>
                     <div className="mt-6 flex justify-between items-end">
                       <div>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Lokasi</p>
-                        <p className="font-bold text-amber-500">{item.rack}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Lokasi</p>
+                        <p className="font-bold text-orange-500">{item.rack}</p>
                       </div>
                     </div>
                   </div>
@@ -627,23 +627,23 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="space-y-6"
             >
-              <h2 className="text-2xl font-bold">Activity Logs</h2>
+              <h2 className="text-2xl font-bold text-white">Activity Logs</h2>
               <div className="space-y-3">
                 {logs.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500">Belum ada aktivitas suara</div>
+                  <div className="text-center py-12 text-orange-100">Belum ada aktivitas suara</div>
                 ) : (
                   logs.map(log => (
-                    <div key={log.id} className="bg-[#162032] p-4 rounded-xl border border-white/5 flex items-center gap-4">
+                    <div key={log.id} className="bg-white shadow-md p-4 rounded-xl border border-transparent flex items-center gap-4">
                       <div className={`p-2 rounded-lg ${
-                        log.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' :
-                        log.status === 'not_found' ? 'bg-amber-500/10 text-amber-500' :
-                        'bg-red-500/10 text-red-500'
+                        log.status === 'success' ? 'bg-emerald-100 text-emerald-600' :
+                        log.status === 'not_found' ? 'bg-orange-100 text-orange-600' :
+                        'bg-red-100 text-red-600'
                       }`}>
                         {log.status === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
                       </div>
                       <div className="flex-1">
-                        <p className="text-sm font-medium">"{log.command}"</p>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">
+                        <p className="text-sm font-medium text-slate-800">"{log.command}"</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">
                           {log.timestamp} • {log.status === 'success' ? `Matched: ${log.match}` : 'No Match Found'}
                         </p>
                       </div>
@@ -661,49 +661,49 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              <h2 className="text-2xl font-bold">Settings</h2>
+              <h2 className="text-2xl font-bold text-white">Settings</h2>
               
               {/* Profile Card */}
-              <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 flex items-center gap-6">
-                <div className="w-16 h-16 rounded-2xl bg-amber-500 flex items-center justify-center text-[#0B1221]">
+              <div className="bg-white p-6 shadow-md rounded-2xl border border-transparent flex items-center gap-6">
+                <div className="w-16 h-16 rounded-2xl bg-orange-100 flex items-center justify-center text-orange-600">
                   <User size={32} strokeWidth={2.5} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold">Alvin P</h3>
-                  <p className="text-slate-400 text-sm">QC MCR</p>
+                  <h3 className="text-xl font-bold text-slate-800">Alvin P</h3>
+                  <p className="text-slate-500 text-sm">QC MCR</p>
                 </div>
               </div>
 
               {/* Google Sheets Integration Status */}
-              <div className="bg-[#162032] p-6 rounded-2xl border border-white/5 space-y-4">
+              <div className="bg-white p-6 shadow-md rounded-2xl border border-transparent space-y-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
-                    <Database className="text-amber-500" size={20} />
-                    <h3 className="font-bold">Google Sheets API</h3>
+                    <Database className="text-orange-500" size={20} />
+                    <h3 className="font-bold text-slate-800">Google Sheets API</h3>
                   </div>
                   <div className={`w-3 h-3 rounded-full ${inventory.length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                 </div>
                 
                 <div className="space-y-3">
-                  <p className="text-xs text-slate-400">Masukkan URL Web App dari Google Apps Script:</p>
+                  <p className="text-xs text-slate-500">Masukkan URL Web App dari Google Apps Script:</p>
                   <input 
                     type="text"
                     placeholder="https://script.google.com/macros/s/.../exec"
                     value={sheetUrl}
                     onChange={(e) => setSheetUrl(e.target.value)}
-                    className="w-full bg-[#0B1221] border border-white/10 rounded-xl py-3 px-4 text-xs font-mono text-amber-500 focus:ring-1 focus:ring-amber-500 transition-all outline-none"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-mono text-orange-600 focus:ring-1 focus:ring-orange-500 transition-all outline-none"
                   />
                   <button 
                     onClick={handleSaveUrl}
                     disabled={isSyncing}
-                    className="w-full py-3 bg-amber-500 text-[#0B1221] rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 hover:bg-amber-400 transition-all disabled:opacity-50"
+                    className="cursor-pointer w-full py-3 bg-orange-500 text-white shadow-md rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 hover:bg-orange-600 transition-all disabled:opacity-50"
                   >
                     {isSyncing ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                     {isSyncing ? 'Syncing...' : 'Save & Sync Data'}
                   </button>
                 </div>
 
-                <div className="bg-[#0B1221] p-4 rounded-xl border border-white/5 space-y-3">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
                   <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     <span>Status Koneksi</span>
                     <span className={inventory.length > 0 ? 'text-emerald-500' : 'text-red-500'}>
@@ -712,33 +712,33 @@ export default function App() {
                   </div>
                   <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     <span>Total Items</span>
-                    <span className="text-amber-500">{inventory.length}</span>
+                    <span className="text-orange-600 font-black">{inventory.length}</span>
                   </div>
                 </div>
               </div>
 
               {/* Controls */}
               <div className="space-y-4">
-                <div className="bg-[#162032] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
+                <div className="bg-white p-5 shadow-md rounded-2xl border border-transparent flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="p-2 bg-slate-800 rounded-lg text-slate-400">
+                    <div className="p-2 bg-orange-100 rounded-lg text-orange-600">
                       {voiceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
                     </div>
                     <div>
-                      <p className="font-bold">Voice Feedback</p>
+                      <p className="font-bold text-slate-800">Voice Feedback</p>
                       <p className="text-xs text-slate-500">Bacakan hasil pencarian otomatis</p>
                     </div>
                   </div>
                   <button 
                     onClick={() => setVoiceEnabled(!voiceEnabled)}
-                    className={`w-12 h-6 rounded-full relative transition-all duration-300 ${voiceEnabled ? 'bg-amber-500' : 'bg-slate-700'}`}
+                    className={`cursor-pointer w-12 h-6 rounded-full relative transition-all duration-300 ${voiceEnabled ? 'bg-orange-500' : 'bg-slate-300'}`}
                   >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 ${voiceEnabled ? 'right-1' : 'left-1'}`} />
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-300 ${voiceEnabled ? 'right-1' : 'left-1'}`} />
                   </button>
                 </div>
               </div>
 
-              <button className="w-full py-4 bg-red-500/10 text-red-500 rounded-2xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 hover:bg-red-500/20 transition-all">
+              <button className="cursor-pointer w-full py-4 bg-white text-red-500 shadow-md rounded-2xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 hover:bg-red-50 transition-all">
                 <LogOut size={16} />
                 Logout Session
               </button>
@@ -748,7 +748,7 @@ export default function App() {
       </main>
 
       {/* Floating Bottom Navigation */}
-      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-[#162032]/80 backdrop-blur-xl border border-white/5 rounded-full py-4 px-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] z-50">
+      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-white/90 backdrop-blur-xl border border-transparent rounded-full py-4 px-8 shadow-[0_20px_50px_rgba(234,88,12,0.3)] z-50">
         <div className="flex justify-between items-center">
           <NavButton tab="inventory" icon={Package} label="Items" />
           <NavButton tab="voice" icon={Mic} label="Voice" />
