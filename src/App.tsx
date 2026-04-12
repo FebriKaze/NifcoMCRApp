@@ -45,6 +45,52 @@ interface LogEntry {
 
 const INITIAL_INVENTORY: InventoryItem[] = [];
 
+/** Awalan kategori di nama barang (filter daftar inventaris). */
+const INVENTORY_LINE_PREFIXES = {
+  lastshot: 'LASTSHOT',
+  standar: 'STANDAR SAMPLE',
+} as const;
+
+const alnumCompact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** Varian teks untuk cocokkan SKU setelah STT Safari sering salah (mis. tes11 → t11). */
+const skuTranscriptVariants = (compact: string): string[] => {
+  const out = new Set<string>();
+  if (!compact) return [];
+  out.add(compact);
+  let v = compact.replace(/^tes(?=\d)/i, 't');
+  out.add(v);
+  v = compact.replace(/^test(?=\d)/i, 't');
+  out.add(v);
+  v = compact.replace(/^te(?=\d)/i, 't');
+  out.add(v);
+  v = compact.replace(/^tee(?=\d)/i, 't');
+  out.add(v);
+  return [...out];
+};
+
+/**
+ * Token alfanumerik yang mengandung huruf dan angka (mis. T11KW) dieja per karakter
+ * agar TTS iOS/Safari tidak membaca "tes sebelas" atau menyamakan dengan kata lain.
+ */
+const expandCodeTokensForSpeech = (text: string): string => {
+  return text.replace(
+    /\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{2,}\b/g,
+    (token) => token.split('').join(' ')
+  );
+};
+
+const itemMatchesInventoryLineFilter = (
+  name: string,
+  filter: 'all' | 'lastshot' | 'standar'
+): boolean => {
+  const n = name.trim();
+  if (filter === 'all') return true;
+  const upper = n.toUpperCase();
+  if (filter === 'lastshot') return upper.startsWith(INVENTORY_LINE_PREFIXES.lastshot);
+  return upper.startsWith(INVENTORY_LINE_PREFIXES.standar.toUpperCase());
+};
+
 // --- Main Application Component ---
 
 export default function App() {
@@ -56,6 +102,7 @@ export default function App() {
   const [transcript, setTranscript] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [inventoryLineFilter, setInventoryLineFilter] = useState<'all' | 'lastshot' | 'standar'>('all');
   const [sheetUrl, setSheetUrl] = useState('https://script.google.com/macros/s/AKfycbz1kWrk2PdmbnI1vbMFWXxd8sxIRQ74jB9SIJiDJr2JOMOFvrivLrsAzzP6VgXcpzp_/exec');
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -207,6 +254,26 @@ export default function App() {
     console.log('Keywords detected:', keywords);
 
     // Logika pencarian: Mencari item yang mengandung keyword terbanyak atau kecocokan parsial
+    const compactPhrase = alnumCompact(lowerText);
+    const keywordBlob = alnumCompact(keywords.join(' '));
+    const transcriptVariants = new Set<string>([
+      ...skuTranscriptVariants(compactPhrase),
+      ...skuTranscriptVariants(keywordBlob),
+    ]);
+
+    const skuAwareScore = (item: InventoryItem): number => {
+      const skuA = alnumCompact(item.sku);
+      const nameA = alnumCompact(item.name);
+      let best = 0;
+      for (const v of transcriptVariants) {
+        if (v.length < 2) continue;
+        if (v === skuA) best = Math.max(best, 100 + v.length);
+        else if (skuA.includes(v) || v.includes(skuA)) best = Math.max(best, 50 + Math.min(v.length, skuA.length));
+        else if (nameA.includes(v)) best = Math.max(best, 20 + v.length);
+      }
+      return best;
+    };
+
     let match = inventory.find(item => {
       const itemName = item.name.toLowerCase();
       const itemSku = item.sku.toLowerCase();
@@ -222,6 +289,19 @@ export default function App() {
       
       return hasKeywordMatch || hasFullMatch || hasReverseMatch;
     });
+
+    if (!match) {
+      let bestItem: InventoryItem | null = null;
+      let bestScore = 0;
+      for (const item of inventory) {
+        const sc = skuAwareScore(item);
+        if (sc > bestScore) {
+          bestScore = sc;
+          bestItem = item;
+        }
+      }
+      if (bestItem && bestScore >= 50) match = bestItem;
+    }
 
     if (match) {
       console.log('Match found:', match.name);
@@ -245,7 +325,7 @@ export default function App() {
     
     // Trik agar "KW" tidak dibaca "kilowatt" tapi dibaca per huruf "K W"
     // Dan hapus tanda "-" agar tidak dibaca "sampai"
-    const sanitizedText = text
+    let sanitizedText = expandCodeTokensForSpeech(text)
       .replace(/KW/g, 'K W')
       .replace(/kw/g, 'k w')
       .replace(/-/g, ' ');
@@ -255,7 +335,7 @@ export default function App() {
 
     const utterance = new SpeechSynthesisUtterance(sanitizedText);
     utterance.lang = 'id-ID';
-    utterance.rate = 1.0;
+    utterance.rate = 0.92;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
     utterance.onstart = () => {
@@ -428,12 +508,17 @@ export default function App() {
   // --- Filtered Inventory ---
   
   const filteredInventory = useMemo(() => {
-    return inventory.filter(item => 
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.rack.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [inventory, searchQuery]);
+    const q = searchQuery.toLowerCase().trim();
+    return inventory.filter(item => {
+      if (!itemMatchesInventoryLineFilter(item.name, inventoryLineFilter)) return false;
+      if (!q) return true;
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.sku.toLowerCase().includes(q) ||
+        item.rack.toLowerCase().includes(q)
+      );
+    });
+  }, [inventory, searchQuery, inventoryLineFilter]);
 
   // --- UI Components ---
 
@@ -576,6 +661,28 @@ export default function App() {
             >
               <div className="flex flex-col gap-4">
                 <h2 className="text-2xl font-bold text-white">Inventory List</h2>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { id: 'all' as const, label: 'Semua' },
+                      { id: 'lastshot' as const, label: INVENTORY_LINE_PREFIXES.lastshot },
+                      { id: 'standar' as const, label: INVENTORY_LINE_PREFIXES.standar },
+                    ] as const
+                  ).map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setInventoryLineFilter(id)}
+                      className={`rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all ${
+                        inventoryLineFilter === id
+                          ? 'bg-white text-orange-600 shadow-lg'
+                          : 'bg-white/15 text-white hover:bg-white/25'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <div className="relative">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                   <input 
