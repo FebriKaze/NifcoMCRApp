@@ -69,15 +69,95 @@ const skuTranscriptVariants = (compact: string): string[] => {
   return [...out];
 };
 
+/** Ejaan huruf (Indonesia) — TTS Safari + id-ID jauh lebih stabil daripada membacakan string mentah. */
+const ID_LETTER_NAMES: Record<string, string> = {
+  A: 'a',
+  B: 'be',
+  C: 'ce',
+  D: 'de',
+  E: 'e',
+  F: 'ef',
+  G: 'ge',
+  H: 'ha',
+  I: 'i',
+  J: 'je',
+  K: 'ka',
+  L: 'el',
+  M: 'em',
+  N: 'en',
+  O: 'o',
+  P: 'pe',
+  Q: 'ki',
+  R: 'er',
+  S: 'es',
+  T: 'te',
+  U: 'u',
+  V: 've',
+  W: 'we',
+  X: 'eks',
+  Y: 'ye',
+  Z: 'zet',
+};
+
+const ID_DIGIT_NAMES = ['nol', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan'];
+
+const spellCharForIndonesianTts = (c: string): string => {
+  if (/\d/.test(c)) return ID_DIGIT_NAMES[Number(c)] ?? c;
+  const u = c.toUpperCase();
+  if (/[A-Z]/.test(u)) return ID_LETTER_NAMES[u] ?? c;
+  return c;
+};
+
 /**
- * Token alfanumerik yang mengandung huruf dan angka (mis. T11KW) dieja per karakter
- * agar TTS iOS/Safari tidak membaca "tes sebelas" atau menyamakan dengan kata lain.
+ * Token alfanumerik (huruf + angka, mis. T11KW) dieja per karakter dengan kata Indonesia
+ * supaya output suara selaras dengan yang tertulis (bukan "tes sebelas", dll.).
  */
+const spellAlphanumericTokenForSpeech = (token: string): string => {
+  return [...token].map(spellCharForIndonesianTts).join(', ');
+};
+
 const expandCodeTokensForSpeech = (text: string): string => {
   return text.replace(
     /\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{2,}\b/g,
-    (token) => token.split('').join(' ')
+    (token) => spellAlphanumericTokenForSpeech(token)
   );
+};
+
+/** Potong teks panjang — iOS sering memotong atau mengacaukan satu utterance panjang. */
+const splitIntoSpeakChunks = (text: string, maxLen = 140): string[] => {
+  const raw = text.trim();
+  if (!raw) return [];
+  const parts = raw.split(/(?<=[.!?])\s+/);
+  const chunks: string[] = [];
+  for (const segment of parts) {
+    if (segment.length <= maxLen) {
+      chunks.push(segment);
+      continue;
+    }
+    let pos = 0;
+    while (pos < segment.length) {
+      let end = Math.min(pos + maxLen, segment.length);
+      if (end < segment.length) {
+        const sp = segment.lastIndexOf(' ', end);
+        if (sp > pos + 24) end = sp;
+      }
+      const piece = segment.slice(pos, end).trim();
+      if (piece) chunks.push(piece);
+      pos = end;
+      while (pos < segment.length && segment[pos] === ' ') pos++;
+    }
+  }
+  return chunks.filter(Boolean);
+};
+
+const pickIndonesianVoice = (): SpeechSynthesisVoice | undefined => {
+  const list = window.speechSynthesis.getVoices();
+  const idVoices = list.filter((v) => v.lang?.toLowerCase().startsWith('id'));
+  if (idVoices.length === 0) return undefined;
+  const premium = idVoices.find(
+    (v) => /premium|enhanced|natural/i.test(v.name) || v.localService === true
+  );
+  return premium ?? idVoices[0];
 };
 
 const itemMatchesInventoryLineFilter = (
@@ -185,6 +265,7 @@ export default function App() {
   
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speakGenerationRef = useRef(0);
   /** Jeda diam (ms) setelah suara berhenti baru jalankan pencarian — Safari sering memutus kalimat terlalu cepat jika lebih pendek. */
   const VOICE_END_SILENCE_MS = 2400;
 
@@ -210,6 +291,19 @@ export default function App() {
 
   useEffect(() => {
     recognitionRef.current = initRecognition();
+  }, []);
+
+  // Safari memuat daftar suara (voices) async — pakai event agar getVoices() terisi.
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    const load = () => {
+      try {
+        window.speechSynthesis.getVoices();
+      } catch (_) {}
+    };
+    load();
+    window.speechSynthesis.addEventListener('voiceschanged', load);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load);
   }, []);
 
   // --- Logic: Voice Search & Matching ---
@@ -322,35 +416,52 @@ export default function App() {
 
   const speak = (text: string) => {
     if (!window.speechSynthesis) return;
-    
-    // Trik agar "KW" tidak dibaca "kilowatt" tapi dibaca per huruf "K W"
-    // Dan hapus tanda "-" agar tidak dibaca "sampai"
-    let sanitizedText = expandCodeTokensForSpeech(text)
-      .replace(/KW/g, 'K W')
-      .replace(/kw/g, 'k w')
-      .replace(/-/g, ' ');
 
-    // Batalkan suara sebelumnya agar tidak menumpuk (penting untuk iOS)
+    const gen = ++speakGenerationRef.current;
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(sanitizedText);
-    utterance.lang = 'id-ID';
-    utterance.rate = 0.92;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-    utterance.onstart = () => {
-      try {
-        window.speechSynthesis.resume();
-      } catch (_) {}
+    let sanitizedText = expandCodeTokensForSpeech(text)
+      .replace(/\bKW\b/gi, 'ka, we')
+      .replace(/-/g, ' ');
+
+    const chunks = splitIntoSpeakChunks(sanitizedText, 130);
+    if (chunks.length === 0) return;
+
+    let index = 0;
+    const speakNext = () => {
+      if (speakGenerationRef.current !== gen) return;
+      if (index >= chunks.length) return;
+      const chunk = chunks[index++];
+      const utterance = new SpeechSynthesisUtterance(chunk);
+      utterance.lang = 'id-ID';
+      utterance.rate = 0.86;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+      const voice = pickIndonesianVoice();
+      if (voice) utterance.voice = voice;
+      utterance.onstart = () => {
+        try {
+          window.speechSynthesis.resume();
+        } catch (_) {}
+      };
+      utterance.onend = () => {
+        if (speakGenerationRef.current !== gen) return;
+        window.setTimeout(speakNext, 90);
+      };
+      utterance.onerror = () => {
+        if (speakGenerationRef.current !== gen) return;
+        window.setTimeout(speakNext, 90);
+      };
+      window.speechSynthesis.speak(utterance);
     };
 
-    // Sedikit delay untuk iOS agar sistem audio siap setelah recognition
-    setTimeout(() => {
+    window.setTimeout(() => {
+      if (speakGenerationRef.current !== gen) return;
       try {
         window.speechSynthesis.resume();
       } catch (_) {}
-      window.speechSynthesis.speak(utterance);
-    }, 150);
+      speakNext();
+    }, 240);
   };
 
   const addLog = (command: string, match?: string, status: LogEntry['status'] = 'success') => {
@@ -400,11 +511,23 @@ export default function App() {
       let hasTriggeredSearch = false;
       let heardSpeech = false;
 
-      /** Safari + continuous: gabungkan semua segmen agar kalimat panjang tidak terpotong. */
+      /** Gabungkan segmen; pilih alternatif STT dengan confidence tertinggi per segmen (WebKit). */
       const transcriptFromEvent = (event: any) => {
         let line = '';
         for (let i = 0; i < event.results.length; i++) {
-          line += event.results[i][0].transcript;
+          const slice = event.results[i];
+          const nAlt = typeof slice.length === 'number' ? slice.length : 1;
+          let bestJ = 0;
+          let bestConf = -1;
+          for (let j = 0; j < nAlt; j++) {
+            const alt = slice[j];
+            const c = typeof alt?.confidence === 'number' ? alt.confidence : 0;
+            if (c > bestConf) {
+              bestConf = c;
+              bestJ = j;
+            }
+          }
+          line += slice[bestJ]?.transcript ?? '';
         }
         return line.trim();
       };
@@ -412,6 +535,9 @@ export default function App() {
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'id-ID';
+      try {
+        recognition.maxAlternatives = 5;
+      } catch (_) {}
 
       const triggerSearch = (text: string) => {
         if (hasTriggeredSearch || !text.trim()) return;
