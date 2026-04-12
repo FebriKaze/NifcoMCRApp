@@ -137,7 +137,9 @@ export default function App() {
   // --- Voice Recognition Setup ---
   
   const recognitionRef = useRef<any>(null);
-  const silenceTimerRef = useRef<any>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Jeda diam (ms) setelah suara berhenti baru jalankan pencarian — Safari sering memutus kalimat terlalu cepat jika lebih pendek. */
+  const VOICE_END_SILENCE_MS = 2400;
 
   const initRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -148,35 +150,13 @@ export default function App() {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.interimResults = true;
     recognition.lang = 'id-ID';
 
-    recognition.onresult = (event: any) => {
-      const result = event.results[0][0].transcript;
-      setTranscript(result);
-      handleVoiceSearch(result);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error', event.error);
-      setIsListening(false);
-      
-      // Pesan error yang lebih ramah user
-      if (event.error === 'not-allowed') {
-        setErrorMessage('Izin mikrofon ditolak. Silakan cek pengaturan browser HP Anda.');
-      } else if (event.error === 'network') {
-        setErrorMessage('Masalah koneksi internet.');
-      } else if (event.error === 'no-speech') {
-        setErrorMessage('Tidak ada suara yang terdengar.');
-      } else {
-        setErrorMessage(`Error: ${event.error}`);
-      }
-    };
+    recognition.onresult = () => {};
+    recognition.onend = () => {};
+    recognition.onerror = () => {};
 
     return recognition;
   };
@@ -278,11 +258,19 @@ export default function App() {
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
+    utterance.onstart = () => {
+      try {
+        window.speechSynthesis.resume();
+      } catch (_) {}
+    };
 
-    // Tambahkan sedikit delay untuk iOS agar sistem audio siap
+    // Sedikit delay untuk iOS agar sistem audio siap setelah recognition
     setTimeout(() => {
+      try {
+        window.speechSynthesis.resume();
+      } catch (_) {}
       window.speechSynthesis.speak(utterance);
-    }, 100);
+    }, 150);
   };
 
   const addLog = (command: string, match?: string, status: LogEntry['status'] = 'success') => {
@@ -309,10 +297,14 @@ export default function App() {
       return;
     }
 
-    // --- KHUSUS IOS: Unlock Audio & Speech ---
+    // --- KHUSUS IOS / Safari: unlock TTS (gesture user); jangan cancel() di sini — sering memutus unlock ---
     if (window.speechSynthesis) {
-      const msg = new SpeechSynthesisUtterance('');
-      window.speechSynthesis.speak(msg);
+      try {
+        window.speechSynthesis.resume();
+      } catch (_) {}
+      const unlock = new SpeechSynthesisUtterance(' ');
+      unlock.volume = 0.01;
+      window.speechSynthesis.speak(unlock);
     }
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -326,71 +318,73 @@ export default function App() {
       const recognition = new SpeechRecognition();
       let lastProcessedTranscript = '';
       let hasTriggeredSearch = false;
-      
-      recognition.continuous = false;
+      let heardSpeech = false;
+
+      /** Safari + continuous: gabungkan semua segmen agar kalimat panjang tidak terpotong. */
+      const transcriptFromEvent = (event: any) => {
+        let line = '';
+        for (let i = 0; i < event.results.length; i++) {
+          line += event.results[i][0].transcript;
+        }
+        return line.trim();
+      };
+
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'id-ID';
 
       const triggerSearch = (text: string) => {
         if (hasTriggeredSearch || !text.trim()) return;
         hasTriggeredSearch = true;
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
         setTranscript(text);
+        try {
+          recognition.stop();
+        } catch (_) {}
         handleVoiceSearch(text);
       };
 
-      const resetSilenceTimer = (final = false) => {
+      const scheduleEndAfterSilence = () => {
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        if (!final) {
-          silenceTimerRef.current = setTimeout(() => {
-            console.log('Silence detected, processing last transcript...');
-            triggerSearch(lastProcessedTranscript);
-            recognition.stop();
-          }, 1500);
-        }
+        silenceTimerRef.current = setTimeout(() => {
+          console.log('Silence detected, processing full transcript...');
+          triggerSearch(lastProcessedTranscript);
+        }, VOICE_END_SILENCE_MS);
       };
 
       recognition.onstart = () => {
         setIsListening(true);
         setTranscript('Mulai mendengarkan...');
-        resetSilenceTimer();
+      };
+
+      recognition.onspeechstart = () => {
+        heardSpeech = true;
       };
 
       recognition.onsoundstart = () => {
         setTranscript('Suara terdeteksi...');
-        resetSilenceTimer();
       };
 
       recognition.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
+        const combined = transcriptFromEvent(event);
+        if (!combined) return;
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const transcriptText = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript = transcriptText;
-          } else {
-            interimTranscript += transcriptText;
-          }
-        }
-
-        const currentText = finalTranscript || interimTranscript;
-        if (currentText) {
-          lastProcessedTranscript = currentText;
-        }
-
-        if (finalTranscript) {
-          resetSilenceTimer(true);
-          triggerSearch(finalTranscript);
-          recognition.stop();
-        } else if (interimTranscript) {
-          setTranscript(interimTranscript + '...');
-          resetSilenceTimer();
-        }
+        lastProcessedTranscript = combined;
+        heardSpeech = true;
+        setTranscript(combined + (event.results[event.results.length - 1].isFinal ? '' : '…'));
+        // Jangan proses di isFinal — WebKit menandai final terlalu awal; tunggu jeda bicara.
+        scheduleEndAfterSilence();
       };
 
       recognition.onend = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        // Jika belum sempat trigger search (misal karena timeout), paksa trigger sekarang
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
+        // Akhir sesi tanpa timer (mis. diputus browser): proses jika ada teks dan belum diproses
         if (!hasTriggeredSearch && lastProcessedTranscript) {
           triggerSearch(lastProcessedTranscript);
         }
@@ -398,17 +392,21 @@ export default function App() {
       };
 
       recognition.onerror = (event: any) => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
         console.error('Recognition Error:', event.error);
         setIsListening(false);
         
         if (event.error === 'not-allowed') {
           setErrorMessage('Izin mikrofon ditolak. Cek Pengaturan > Safari > Mikrofon.');
         } else if (event.error === 'no-speech') {
-          // Abaikan error no-speech jika kita sudah punya transcript sementara
-          if (!lastProcessedTranscript) {
+          if (!heardSpeech && !lastProcessedTranscript) {
             setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
           }
+        } else if (event.error === 'aborted') {
+          // User menutup mic — tidak perlu pesan
         } else if (event.error === 'network') {
           setErrorMessage('Koneksi internet bermasalah.');
         } else {
