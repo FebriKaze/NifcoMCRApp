@@ -53,6 +53,56 @@ const INVENTORY_LINE_PREFIXES = {
 
 const alnumCompact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+/** Edit distance pendek — untuk salah dengar kecil vs SKU di sheet. */
+const levenshtein = (a: string, b: string): number => {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const row = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) row[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = row[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return row[n];
+};
+
+/**
+ * Safari + id-ID sering mengubah "J nol" / "j0" jadi kata bahasa ("journal", "jurnal").
+ * Normalisasi sebelum pencarian — bukan AI, hanya pola umum di gudang/SKU.
+ */
+const normalizeVoiceTranscriptForCodes = (raw: string): string => {
+  let s = raw.trim();
+  const pairs: [RegExp, string][] = [
+    [/\bjournal(s)?\b/gi, 'j 0'],
+    [/\bjurnal(s)?\b/gi, 'j 0'],
+    [/\bjernal(s)?\b/gi, 'j 0'],
+    [/\bjay\s+oh\b/gi, 'j 0'],
+    [/\bj\s+oh\b/gi, 'j 0'],
+    [/\bjay\s+zero\b/gi, 'j 0'],
+    [/\bj\s+zero\b/gi, 'j 0'],
+    [/\bj\s+number\s+0\b/gi, 'j 0'],
+    [/\bje\s+nol\b/gi, 'j 0'],
+    [/\bje\s+nul\b/gi, 'j 0'],
+    [/\bj\s+nol\b/gi, 'j 0'],
+    [/\bj\s+nul\b/gi, 'j 0'],
+    [/\bgen\s+0\b/gi, 'j 0'],
+    [/\bten\s+0\b/gi, 't 0'],
+    [/\btee\s+nol\b/gi, 't 0'],
+    [/\btee\s+0\b/gi, 't 0'],
+  ];
+  for (const [re, rep] of pairs) s = s.replace(re, rep);
+  return s.replace(/\s+/g, ' ').trim();
+};
+
 /** Varian teks untuk cocokkan SKU setelah STT Safari sering salah (mis. tes11 → t11). */
 const skuTranscriptVariants = (compact: string): string[] => {
   const out = new Set<string>();
@@ -67,6 +117,87 @@ const skuTranscriptVariants = (compact: string): string[] => {
   v = compact.replace(/^tee(?=\d)/i, 't');
   out.add(v);
   return [...out];
+};
+
+const transcriptSegmentBestConfidence = (res: any): { j: number; transcript: string } => {
+  const nAlt = typeof res?.length === 'number' ? res.length : 1;
+  let bestJ = 0;
+  let bestConf = -1;
+  for (let j = 0; j < nAlt; j++) {
+    const alt = res[j];
+    const c = typeof alt?.confidence === 'number' ? alt.confidence : 0;
+    if (c > bestConf) {
+      bestConf = c;
+      bestJ = j;
+    }
+  }
+  return { j: bestJ, transcript: res[bestJ]?.transcript ?? '' };
+};
+
+/** Skor seberapa cocok teks dengan SKU/nama di inventaris (untuk pilih hipotesis STT). */
+const scoreTranscriptAgainstInventory = (text: string, inventory: InventoryItem[]): number => {
+  const fixed = normalizeVoiceTranscriptForCodes(text);
+  const lower = fixed.toLowerCase();
+  const compactPhrase = alnumCompact(lower);
+  const variants = new Set<string>([
+    ...skuTranscriptVariants(compactPhrase),
+    ...skuTranscriptVariants(alnumCompact(fixed)),
+  ]);
+  let max = 0;
+  for (const item of inventory) {
+    const skuA = alnumCompact(item.sku);
+    const nameA = alnumCompact(item.name);
+    for (const v of variants) {
+      if (v.length < 1) continue;
+      if (v === skuA) max = Math.max(max, 100 + v.length);
+      else if (skuA.includes(v) || v.includes(skuA)) max = Math.max(max, 55 + Math.min(v.length, skuA.length));
+      else if (nameA.includes(v)) max = Math.max(max, 22 + v.length);
+      if (skuA.length <= 12 && v.length <= 16 && v.length >= 2) {
+        const d = levenshtein(skuA, v);
+        if (d <= 2) max = Math.max(max, 48 - d * 14);
+      }
+    }
+  }
+  return max;
+};
+
+/** Pilih transkrip terbaik: hasil utama + variasi segmen terakhir + normalisasi. */
+const pickBestTranscriptForSearch = (primary: string, event: any, inventory: InventoryItem[]): string => {
+  const candidates = new Set<string>();
+  const add = (t: string) => {
+    const x = t.trim();
+    if (!x) return;
+    candidates.add(x);
+    candidates.add(normalizeVoiceTranscriptForCodes(x));
+  };
+  add(primary);
+
+  if (event?.results?.length) {
+    const n = event.results.length;
+    const lastIdx = n - 1;
+    const lastSlice = event.results[lastIdx];
+    const nAlt = typeof lastSlice?.length === 'number' ? lastSlice.length : 1;
+    if (nAlt > 1) {
+      let prefix = '';
+      for (let i = 0; i < lastIdx; i++) {
+        prefix += transcriptSegmentBestConfidence(event.results[i]).transcript;
+      }
+      for (let j = 0; j < nAlt; j++) {
+        add(prefix + (lastSlice[j]?.transcript ?? ''));
+      }
+    }
+  }
+
+  let best = normalizeVoiceTranscriptForCodes(primary);
+  let bestScore = scoreTranscriptAgainstInventory(primary, inventory);
+  for (const c of candidates) {
+    const sc = scoreTranscriptAgainstInventory(c, inventory);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = normalizeVoiceTranscriptForCodes(c);
+    }
+  }
+  return best.trim();
 };
 
 /** Ejaan huruf (Indonesia) — TTS Safari + id-ID jauh lebih stabil daripada membacakan string mentah. */
@@ -183,6 +314,13 @@ export default function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [inventoryLineFilter, setInventoryLineFilter] = useState<'all' | 'lastshot' | 'standar'>('all');
+  const [speechRecognitionLang, setSpeechRecognitionLang] = useState<'id-ID' | 'en-US'>(() => {
+    try {
+      const s = localStorage.getItem('mcr_stt_lang');
+      if (s === 'en-US' || s === 'id-ID') return s;
+    } catch (_) {}
+    return 'id-ID';
+  });
   const [sheetUrl, setSheetUrl] = useState('https://script.google.com/macros/s/AKfycbz1kWrk2PdmbnI1vbMFWXxd8sxIRQ74jB9SIJiDJr2JOMOFvrivLrsAzzP6VgXcpzp_/exec');
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -266,6 +404,7 @@ export default function App() {
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speakGenerationRef = useRef(0);
+  const lastRecognitionEventRef = useRef<any>(null);
   /** Jeda diam (ms) setelah suara berhenti baru jalankan pencarian — Safari sering memutus kalimat terlalu cepat jika lebih pendek. */
   const VOICE_END_SILENCE_MS = 2400;
 
@@ -293,6 +432,12 @@ export default function App() {
     recognitionRef.current = initRecognition();
   }, []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('mcr_stt_lang', speechRecognitionLang);
+    } catch (_) {}
+  }, [speechRecognitionLang]);
+
   // Safari memuat daftar suara (voices) async — pakai event agar getVoices() terisi.
   useEffect(() => {
     if (!window.speechSynthesis) return;
@@ -309,8 +454,9 @@ export default function App() {
   // --- Logic: Voice Search & Matching ---
 
   const handleVoiceSearch = async (text: string) => {
-    console.log('Processing voice search for:', text);
-    const lowerText = text.toLowerCase().trim();
+    const normalizedInput = normalizeVoiceTranscriptForCodes(text.trim());
+    console.log('Processing voice search for:', normalizedInput);
+    const lowerText = normalizedInput.toLowerCase().trim();
     
     if (!lowerText) return;
 
@@ -333,7 +479,7 @@ export default function App() {
           if (voiceEnabled) {
             speak(`Stok ${itemToUpdate.name} berhasil diperbarui menjadi ${newStock} unit.`);
           }
-          addLog(text, itemToUpdate.name, 'success');
+          addLog(normalizedInput, itemToUpdate.name, 'success');
         }
         return;
       }
@@ -342,8 +488,17 @@ export default function App() {
     // Daftar kata-kata pengisi (filler words) yang akan diabaikan
     const fillerWords = ['cari', 'tampilkan', 'ada', 'berapa', 'stok', 'dimana', 'lokasi', 'barang', 'tolong', 'cek', 'di', 'rak', 'unit'];
     
-    // Membersihkan transcript dari kata pengisi untuk mendapatkan keyword murni
-    const keywords = lowerText.split(' ').filter(word => !fillerWords.includes(word) && word.length > 2);
+    /** Token pendek seperti j0, t1 tetap dipakai (STT sering mengembalikan kode 2–4 huruf). */
+    const looksLikeSkuToken = (w: string) =>
+      /^([a-z]{1,5}\d|\d+[a-z])([a-z0-9]*)$/i.test(w) && w.length <= 20;
+
+    const keywords = lowerText
+      .split(/\s+/)
+      .filter((word) => {
+        if (!word || fillerWords.includes(word)) return false;
+        if (word.length > 2) return true;
+        return looksLikeSkuToken(word);
+      });
     
     console.log('Keywords detected:', keywords);
 
@@ -403,14 +558,14 @@ export default function App() {
       if (voiceEnabled) {
         speak(`Barang ditemukan. ${match.name} berada di ${match.rack}.`);
       }
-      addLog(text, match.name, 'success');
+      addLog(normalizedInput, match.name, 'success');
     } else {
-      console.log('No match found for:', text);
+      console.log('No match found for:', normalizedInput);
       setVoiceResult(null);
       if (voiceEnabled) {
         speak('Maaf, barang tidak ditemukan dalam sistem.');
       }
-      addLog(text, undefined, 'not_found');
+      addLog(normalizedInput, undefined, 'not_found');
     }
   };
 
@@ -534,7 +689,7 @@ export default function App() {
 
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = 'id-ID';
+      recognition.lang = speechRecognitionLang;
       try {
         recognition.maxAlternatives = 5;
       } catch (_) {}
@@ -546,11 +701,12 @@ export default function App() {
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = null;
         }
-        setTranscript(text);
+        const picked = pickBestTranscriptForSearch(text, lastRecognitionEventRef.current, inventory);
+        setTranscript(picked);
         try {
           recognition.stop();
         } catch (_) {}
-        handleVoiceSearch(text);
+        handleVoiceSearch(picked);
       };
 
       const scheduleEndAfterSilence = () => {
@@ -575,6 +731,7 @@ export default function App() {
       };
 
       recognition.onresult = (event: any) => {
+        lastRecognitionEventRef.current = event;
         const combined = transcriptFromEvent(event);
         if (!combined) return;
 
@@ -966,6 +1123,40 @@ export default function App() {
                   >
                     <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-300 ${voiceEnabled ? 'right-1' : 'left-1'}`} />
                   </button>
+                </div>
+
+                <div className="bg-white p-5 shadow-md rounded-2xl border border-transparent space-y-3">
+                  <div>
+                    <p className="font-bold text-slate-800">Bahasa mikrofon (pengenalan suara)</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Safari sering salah dengar kode seperti J0 jika pakai Indonesia saja (mis. terdengar &quot;journal&quot;).
+                      Untuk SKU huruf+angka, coba <span className="font-semibold text-slate-700">English (US)</span>.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSpeechRecognitionLang('id-ID')}
+                      className={`cursor-pointer flex-1 rounded-xl py-3 text-xs font-bold uppercase tracking-wide transition-all ${
+                        speechRecognitionLang === 'id-ID'
+                          ? 'bg-orange-500 text-white shadow-md'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Indonesia
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSpeechRecognitionLang('en-US')}
+                      className={`cursor-pointer flex-1 rounded-xl py-3 text-xs font-bold uppercase tracking-wide transition-all ${
+                        speechRecognitionLang === 'en-US'
+                          ? 'bg-orange-500 text-white shadow-md'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      English (US)
+                    </button>
+                  </div>
                 </div>
               </div>
 
