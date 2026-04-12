@@ -45,6 +45,19 @@ interface LogEntry {
 
 const INITIAL_INVENTORY: InventoryItem[] = [];
 
+/** Microsoft Edge (Chromium) — perilaku Web Speech sedikit beda dari Chrome. */
+const isChromiumEdge = (): boolean =>
+  typeof navigator !== 'undefined' && /Edg\//.test(navigator.userAgent);
+
+/** Konstruktor STT: Edge mendukung `SpeechRecognition` standar; tetap fallback webkit. */
+const getSpeechRecognitionConstructor = (): (new () => any) | null => {
+  const w = window as unknown as {
+    SpeechRecognition?: new () => any;
+    webkitSpeechRecognition?: new () => any;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+};
+
 /** Awalan kategori di nama barang (filter daftar inventaris). */
 const INVENTORY_LINE_PREFIXES = {
   lastshot: 'LASTSHOT',
@@ -409,14 +422,13 @@ export default function App() {
   const VOICE_END_SILENCE_MS = 2400;
 
   const initRecognition = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
-      setErrorMessage('Browser Anda tidak mendukung Web Speech API. Gunakan Chrome (Android) atau Safari (iOS).');
+    const Ctor = getSpeechRecognitionConstructor();
+    if (!Ctor) {
+      setErrorMessage('Browser tidak mendukung Web Speech API. Gunakan Chrome atau Edge (desktop/Android).');
       return null;
     }
 
-    const recognition = new SpeechRecognition();
+    const recognition = new Ctor();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'id-ID';
@@ -582,6 +594,7 @@ export default function App() {
     const chunks = splitIntoSpeakChunks(sanitizedText, 130);
     if (chunks.length === 0) return;
 
+    const edge = isChromiumEdge();
     let index = 0;
     const speakNext = () => {
       if (speakGenerationRef.current !== gen) return;
@@ -592,8 +605,11 @@ export default function App() {
       utterance.rate = 0.86;
       utterance.pitch = 1;
       utterance.volume = 1;
-      const voice = pickIndonesianVoice();
-      if (voice) utterance.voice = voice;
+      // Edge: set `voice` sering bikin gagal diam / salah engine; cukup pakai lang + suara default.
+      if (!edge) {
+        const voice = pickIndonesianVoice();
+        if (voice) utterance.voice = voice;
+      }
       utterance.onstart = () => {
         try {
           window.speechSynthesis.resume();
@@ -643,8 +659,8 @@ export default function App() {
       return;
     }
 
-    // --- KHUSUS IOS / Safari: unlock TTS (gesture user); jangan cancel() di sini — sering memutus unlock ---
-    if (window.speechSynthesis) {
+    // Unlock TTS ringan untuk Safari/iOS; di Edge sering mengganggu jalur audio recognition.
+    if (window.speechSynthesis && !isChromiumEdge()) {
       try {
         window.speechSynthesis.resume();
       } catch (_) {}
@@ -653,15 +669,15 @@ export default function App() {
       window.speechSynthesis.speak(unlock);
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
+    const Ctor = getSpeechRecognitionConstructor();
+    if (!Ctor) {
       setErrorMessage('Browser ini tidak mendukung fitur suara.');
       return;
     }
 
+    const startRecognitionSession = () => {
     try {
-      const recognition = new SpeechRecognition();
+      const recognition = new Ctor();
       let lastProcessedTranscript = '';
       let hasTriggeredSearch = false;
       let heardSpeech = false;
@@ -691,7 +707,8 @@ export default function App() {
       recognition.interimResults = true;
       recognition.lang = speechRecognitionLang;
       try {
-        recognition.maxAlternatives = 5;
+        // Edge Chromium kadang tidak mengisi alternatif; nilai besar aman di try/catch.
+        recognition.maxAlternatives = isChromiumEdge() ? 3 : 5;
       } catch (_) {}
 
       const triggerSearch = (text: string) => {
@@ -763,7 +780,11 @@ export default function App() {
         setIsListening(false);
         
         if (event.error === 'not-allowed') {
-          setErrorMessage('Izin mikrofon ditolak. Cek Pengaturan > Safari > Mikrofon.');
+          setErrorMessage(
+            isChromiumEdge()
+              ? 'Mikrofon ditolak. Di Edge: ikon gembok di alamat → Izin untuk situs ini → Mikrofon → Izinkan.'
+              : 'Izin mikrofon ditolak. Cek pengaturan mikrofon peramban Anda.'
+          );
         } else if (event.error === 'no-speech') {
           if (!heardSpeech && !lastProcessedTranscript) {
             setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
@@ -771,7 +792,11 @@ export default function App() {
         } else if (event.error === 'aborted') {
           // User menutup mic — tidak perlu pesan
         } else if (event.error === 'network') {
-          setErrorMessage('Koneksi internet bermasalah.');
+          setErrorMessage(
+            isChromiumEdge()
+              ? 'Layanan ucapan Edge butuh internet. Cek koneksi, nonaktifkan VPN, atau di edge://settings/languages aktifkan layanan bicara online.'
+              : 'Koneksi internet bermasalah.'
+          );
         } else {
           setErrorMessage(`Gagal (${event.error}). Coba refresh halaman.`);
         }
@@ -786,6 +811,24 @@ export default function App() {
       setErrorMessage('Gagal menjalankan perekam suara.');
       setIsListening(false);
     }
+    };
+
+    if (isChromiumEdge() && navigator.mediaDevices?.getUserMedia) {
+      void navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          stream.getTracks().forEach((t) => t.stop());
+          startRecognitionSession();
+        })
+        .catch(() => {
+          setErrorMessage(
+            'Edge: izinkan mikrofon untuk situs ini (ikon gembok → Mikrofon), lalu ketuk mic lagi.'
+          );
+        });
+      return;
+    }
+
+    startRecognitionSession();
   };
 
   // --- Filtered Inventory ---
