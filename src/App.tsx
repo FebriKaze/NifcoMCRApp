@@ -4,22 +4,28 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { 
-  Package, 
-  Mic, 
-  History, 
-  Settings, 
-  Search, 
-  AlertTriangle, 
-  CheckCircle2, 
-  Volume2, 
+import {
+  Package,
+  Mic,
+  History,
+  Settings,
+  Search,
+  AlertTriangle,
+  CheckCircle2,
+  Volume2,
   VolumeX,
   User,
   Database,
   RefreshCw,
-  LogOut
+  LogOut,
+  Sun,
+  Moon,
+  MapPin,
+  Boxes,
+  Clock3,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import logo from './image/logo.png';
 
 // --- Types & Interfaces ---
 
@@ -89,15 +95,110 @@ const levenshtein = (a: string, b: string): number => {
 };
 
 /**
+ * Konversi kata bilangan Indonesia/English → digit. Dipakai sebelum pencarian
+ * karena STT id-ID sering menghasilkan "sebelas" padahal user menyebut kode "11".
+ * Mencakup 0–99 (ones, belasan, puluhan majemuk).
+ */
+const NORMALIZE_NUMBER_WORDS: [RegExp, string][] = [
+  [/\bdua\s+belas\b/gi, '12'],
+  [/\btiga\s+belas\b/gi, '13'],
+  [/\bempat\s+belas\b/gi, '14'],
+  [/\blima\s+belas\b/gi, '15'],
+  [/\benam\s+belas\b/gi, '16'],
+  [/\btujuh\s+belas\b/gi, '17'],
+  [/\bdelapan\s+belas\b/gi, '18'],
+  [/\bsembilan\s+belas\b/gi, '19'],
+  [/\bthirteen\b/gi, '13'],
+  [/\bfourteen\b/gi, '14'],
+  [/\bfifteen\b/gi, '15'],
+  [/\bsixteen\b/gi, '16'],
+  [/\bseventeen\b/gi, '17'],
+  [/\beighteen\b/gi, '18'],
+  [/\bnineteen\b/gi, '19'],
+  [/\bnol\b/gi, '0'],
+  [/\bnul\b/gi, '0'],
+  [/\bzero\b/gi, '0'],
+  [/\boh\b/gi, '0'],
+  [/\bsatu\b/gi, '1'],
+  [/\bdua\b/gi, '2'],
+  [/\btiga\b/gi, '3'],
+  [/\bempat\b/gi, '4'],
+  [/\blima\b/gi, '5'],
+  [/\benam\b/gi, '6'],
+  [/\btujuh\b/gi, '7'],
+  [/\bdelapan\b/gi, '8'],
+  [/\bsembilan\b/gi, '9'],
+  [/\bsepuluh\b/gi, '10'],
+  [/\bsebelas\b/gi, '11'],
+  [/\bone\b/gi, '1'],
+  [/\btwo\b/gi, '2'],
+  [/\bthree\b/gi, '3'],
+  [/\bfour\b/gi, '4'],
+  [/\bfive\b/gi, '5'],
+  [/\bsix\b/gi, '6'],
+  [/\bseven\b/gi, '7'],
+  [/\beight\b/gi, '8'],
+  [/\bnine\b/gi, '9'],
+  [/\beleven\b/gi, '11'],
+  [/\btwelve\b/gi, '12'],
+];
+
+const ID_TENS: [RegExp, string][] = [
+  [/\bdua\s+puluh\b/gi, '20'],
+  [/\btiga\s+puluh\b/gi, '30'],
+  [/\bempat\s+puluh\b/gi, '40'],
+  [/\blima\s+puluh\b/gi, '50'],
+  [/\benam\s+puluh\b/gi, '60'],
+  [/\btujuh\s+puluh\b/gi, '70'],
+  [/\bdelapan\s+puluh\b/gi, '80'],
+  [/\bsembilan\s+puluh\b/gi, '90'],
+  [/\btwenty\b/gi, '20'],
+  [/\bthirty\b/gi, '30'],
+  [/\bforty\b/gi, '40'],
+  [/\bfifty\b/gi, '50'],
+  [/\bsixty\b/gi, '60'],
+  [/\bseventy\b/gi, '70'],
+  [/\beighty\b/gi, '80'],
+  [/\bninety\b/gi, '90'],
+];
+
+/** Ubah "dua puluh satu" / "twenty five" → "21" / "25". */
+const normalizeCompoundTens = (s: string): string => {
+  const TENS: Record<string, string> = {
+    '20': 'dua puluh', '30': 'tiga puluh', '40': 'empat puluh',
+    '50': 'lima puluh', '60': 'enam puluh', '70': 'tujuh puluh',
+    '80': 'delapan puluh', '90': 'sembilan puluh',
+    twenty: 'twenty', thirty: 'thirty', forty: 'forty',
+    fifty: 'fifty', sixty: 'sixty', seventy: 'seventy',
+    eighty: 'eighty', ninety: 'ninety',
+  };
+  const ONES: Record<string, string> = {
+    '1': 'satu', '2': 'dua', '3': 'tiga', '4': 'empat', '5': 'lima',
+    '6': 'enam', '7': 'tujuh', '8': 'delapan', '9': 'sembilan',
+    one: 'one', two: 'two', three: 'three', four: 'four', five: 'five',
+    six: 'six', seven: 'seven', eight: 'eight', nine: 'nine',
+  };
+  let out = s;
+  for (const [digit, tensWord] of Object.entries(TENS)) {
+    for (const [oneDigit, oneWord] of Object.entries(ONES)) {
+      out = out.replace(new RegExp(`\\b${tensWord}\\s+${oneWord}\\b`, 'gi'), `${digit.slice(0, 1)}${oneDigit}`);
+    }
+  }
+  return out;
+};
+
+/**
  * Safari + id-ID sering mengubah "J nol" / "j0" jadi kata bahasa ("journal", "jurnal").
  * Normalisasi sebelum pencarian — bukan AI, hanya pola umum di gudang/SKU.
  */
 const normalizeVoiceTranscriptForCodes = (raw: string): string => {
-  let s = raw.trim();
+  let s = normalizeCompoundTens(raw.trim());
   const pairs: [RegExp, string][] = [
+    ...NORMALIZE_NUMBER_WORDS,
     [/\bjournal(s)?\b/gi, 'j 0'],
     [/\bjurnal(s)?\b/gi, 'j 0'],
     [/\bjernal(s)?\b/gi, 'j 0'],
+    [/\bjay\b/gi, 'j'],
     [/\bjay\s+oh\b/gi, 'j 0'],
     [/\bj\s+oh\b/gi, 'j 0'],
     [/\bjay\s+zero\b/gi, 'j 0'],
@@ -116,7 +217,7 @@ const normalizeVoiceTranscriptForCodes = (raw: string): string => {
   return s.replace(/\s+/g, ' ').trim();
 };
 
-/** Varian teks untuk cocokkan SKU setelah STT Safari sering salah (mis. tes11 → t11). */
+/** Variasi teks untuk mencocokkan SKU setelah STT Safari sering salah (mis. tes11 → t11). */
 const skuTranscriptVariants = (compact: string): string[] => {
   const out = new Set<string>();
   if (!compact) return [];
@@ -162,13 +263,15 @@ const scoreTranscriptAgainstInventory = (text: string, inventory: InventoryItem[
     const nameA = alnumCompact(item.name);
     for (const v of variants) {
       if (v.length < 1) continue;
-      if (v === skuA) max = Math.max(max, 100 + v.length);
-      else if (skuA.includes(v) || v.includes(skuA)) max = Math.max(max, 55 + Math.min(v.length, skuA.length));
-      else if (nameA.includes(v)) max = Math.max(max, 22 + v.length);
-      if (skuA.length <= 12 && v.length <= 16 && v.length >= 2) {
-        const d = levenshtein(skuA, v);
-        if (d <= 2) max = Math.max(max, 48 - d * 14);
+      if (skuA) {
+        if (v === skuA) max = Math.max(max, 100 + v.length);
+        else if (skuA.includes(v) || v.includes(skuA)) max = Math.max(max, 55 + Math.min(v.length, skuA.length));
+        if (skuA.length <= 12 && v.length <= 16 && v.length >= 2) {
+          const d = levenshtein(skuA, v);
+          if (d <= 2) max = Math.max(max, 48 - d * 14);
+        }
       }
+      if (nameA.includes(v)) max = Math.max(max, 22 + v.length);
     }
   }
   return max;
@@ -213,7 +316,7 @@ const pickBestTranscriptForSearch = (primary: string, event: any, inventory: Inv
   return best.trim();
 };
 
-/** Ejaan huruf (Indonesia) — TTS Safari + id-ID jauh lebih stabil daripada membacakan string mentah. */
+/** Ejaan huruf (Indonesia) — TTS Safari + id-ID jauh lebih stabil daripada membaca string mentah. */
 const ID_LETTER_NAMES: Record<string, string> = {
   A: 'a',
   B: 'be',
@@ -253,8 +356,8 @@ const spellCharForIndonesianTts = (c: string): string => {
 };
 
 /**
- * Token alfanumerik (huruf + angka, mis. T11KW) dieja per karakter dengan kata Indonesia
- * supaya output suara selaras dengan yang tertulis (bukan "tes sebelas", dll.).
+ * Token alfanumerik (huruf + angka, mis. T11KW) diucapkan per karakter dengan kata Indonesia
+ * supaya keluaran suara sejalan dengan yang tertulis (bukan "tes sebelas", dst.).
  */
 const spellAlphanumericTokenForSpeech = (token: string): string => {
   return [...token].map(spellCharForIndonesianTts).join(', ');
@@ -315,6 +418,51 @@ const itemMatchesInventoryLineFilter = (
   return upper.startsWith(INVENTORY_LINE_PREFIXES.standar.toUpperCase());
 };
 
+// --- Ambient background (glassmorphism light) ---
+
+function AmbientBackground() {
+  return (
+    <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+      <motion.div
+        className="blob -top-40 -left-40 h-[420px] w-[420px] bg-emerald-400/20 dark:bg-emerald-500/15"
+        animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
+        transition={{ duration: 20, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="blob top-1/4 -right-40 h-[480px] w-[480px] bg-sky-400/20 dark:bg-indigo-500/15"
+        animate={{ x: [0, -50, 0], y: [0, 50, 0] }}
+        transition={{ duration: 24, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="blob bottom-0 left-1/4 h-[380px] w-[380px] bg-violet-400/20 dark:bg-cyan-500/10"
+        animate={{ x: [0, 40, 0], y: [0, -30, 0] }}
+        transition={{ duration: 21, repeat: Infinity, ease: 'easeInOut' }}
+      />
+    </div>
+  );
+}
+
+/** Toggle switch kecil bergaya modern. */
+function Theme({ on, onToggle, label }: { on: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      className={`focus-ring relative h-7 cursor-pointer rounded-full transition-colors duration-300 ${
+        on ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
+      }`}
+      style={{ width: '3.25rem' }}
+    >
+      <motion.div
+        className="absolute top-1 h-5 w-5 rounded-full bg-white shadow-md"
+        animate={{ left: on ? 'calc(100% - 1.25rem - 4px)' : '4px' }}
+        transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+      />
+    </button>
+  );
+}
+
 // --- Main Application Component ---
 
 export default function App() {
@@ -327,6 +475,14 @@ export default function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [inventoryLineFilter, setInventoryLineFilter] = useState<'all' | 'lastshot' | 'standar'>('all');
+  const [dark, setDark] = useState<boolean>(() => {
+    try {
+      const s = localStorage.getItem('mcr_theme');
+      if (s === 'dark') return true;
+      if (s === 'light') return false;
+    } catch (_) {}
+    return true;
+  });
   const [speechRecognitionLang, setSpeechRecognitionLang] = useState<'id-ID' | 'en-US'>(() => {
     try {
       const s = localStorage.getItem('mcr_stt_lang');
@@ -334,86 +490,45 @@ export default function App() {
     } catch (_) {}
     return 'id-ID';
   });
-  const [sheetUrl, setSheetUrl] = useState('https://script.google.com/macros/s/AKfycbz1kWrk2PdmbnI1vbMFWXxd8sxIRQ74jB9SIJiDJr2JOMOFvrivLrsAzzP6VgXcpzp_/exec');
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // --- Data Initialization (Google Sheets Integration) ---
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', dark);
+    try {
+      localStorage.setItem('mcr_theme', dark ? 'dark' : 'light');
+    } catch (_) {}
+  }, [dark]);
+
+  // --- Data Initialization (File Excel Lokal) ---
 
   const fetchData = async () => {
-    if (!sheetUrl) {
-      setErrorMessage('Silakan masukkan URL Google Apps Script di tab Config.');
-      return;
-    }
     setIsSyncing(true);
     setErrorMessage(null);
     try {
-      const response = await fetch(sheetUrl);
+      const response = await fetch('/api/inventory');
       const data = await response.json();
-      
+
       if (Array.isArray(data)) {
-        // Tambahkan status berdasarkan stok
-        const enrichedData = data.map(item => ({
-          ...item,
-          status: item.stock < 10 ? 'critical' : item.stock < 50 ? 'low' : 'Nifco Product'
-        }));
-        setInventory(enrichedData);
+        setInventory(data);
       } else {
-        setErrorMessage('Gagal mengambil data. Pastikan URL Web App benar.');
+        setErrorMessage('Gagal membaca data. Pastikan data/inventory.xlsx ada.');
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-      setErrorMessage('Terjadi kesalahan koneksi ke Google Sheets.');
+      setErrorMessage('Terjadi kesalahan koneksi ke server. Jalankan server Express (npm run dev).');
     } finally {
       setIsSyncing(false);
     }
   };
 
   useEffect(() => {
-    if (sheetUrl) {
-      fetchData();
-    }
+    fetchData();
   }, []);
 
-  const handleSaveUrl = () => {
-    localStorage.setItem('mcr_sheet_url', sheetUrl);
-    fetchData();
-    alert('URL tersimpan dan sinkronisasi dimulai.');
-  };
-
-  // --- Update Data ke Google Sheets ---
-  const updateStock = async (id: string, newStock: number) => {
-    if (!sheetUrl) return false;
-    setIsSyncing(true);
-    try {
-      const response = await fetch(sheetUrl, {
-        method: 'POST',
-        mode: 'no-cors', // Penting untuk Google Apps Script POST
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, stock: newStock })
-      });
-      
-      // Karena no-cors, kita tidak bisa baca response body, 
-      // tapi kita asumsikan berhasil jika tidak ada error network
-      setInventory(prev => prev.map(item => 
-        item.id === id ? { 
-          ...item, 
-          stock: newStock,
-          status: newStock < 10 ? 'critical' : newStock < 50 ? 'low' : 'Nifco Product'
-        } : item
-      ));
-      return true;
-    } catch (error) {
-      console.error('Error updating stock:', error);
-      setErrorMessage('Gagal memperbarui stok.');
-      return false;
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   // --- Voice Recognition Setup ---
-  
+
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speakGenerationRef = useRef(0);
@@ -469,37 +584,12 @@ export default function App() {
     const normalizedInput = normalizeVoiceTranscriptForCodes(text.trim());
     console.log('Processing voice search for:', normalizedInput);
     const lowerText = normalizedInput.toLowerCase().trim();
-    
+
     if (!lowerText) return;
-
-    // Deteksi perintah update stok
-    // Contoh: "update stok hex bolts jadi 50" atau "set stok hex bolts ke 50"
-    const updateMatch = lowerText.match(/(?:update|set|ubah|ganti)\s+stok\s+(.+)\s+(?:jadi|ke|menjadi)\s+(\d+)/i);
-    
-    if (updateMatch) {
-      const itemNameQuery = updateMatch[1].trim();
-      const newStock = parseInt(updateMatch[2]);
-      
-      const itemToUpdate = inventory.find(item => 
-        item.name.toLowerCase().includes(itemNameQuery) || 
-        item.sku.toLowerCase().includes(itemNameQuery)
-      );
-
-      if (itemToUpdate) {
-        const success = await updateStock(itemToUpdate.id, newStock);
-        if (success) {
-          if (voiceEnabled) {
-            speak(`Stok ${itemToUpdate.name} berhasil diperbarui menjadi ${newStock} unit.`);
-          }
-          addLog(normalizedInput, itemToUpdate.name, 'success');
-        }
-        return;
-      }
-    }
 
     // Daftar kata-kata pengisi (filler words) yang akan diabaikan
     const fillerWords = ['cari', 'tampilkan', 'ada', 'berapa', 'stok', 'dimana', 'lokasi', 'barang', 'tolong', 'cek', 'di', 'rak', 'unit'];
-    
+
     /** Token pendek seperti j0, t1 tetap dipakai (STT sering mengembalikan kode 2–4 huruf). */
     const looksLikeSkuToken = (w: string) =>
       /^([a-z]{1,5}\d|\d+[a-z])([a-z0-9]*)$/i.test(w) && w.length <= 20;
@@ -511,7 +601,7 @@ export default function App() {
         if (word.length > 2) return true;
         return looksLikeSkuToken(word);
       });
-    
+
     console.log('Keywords detected:', keywords);
 
     // Logika pencarian: Mencari item yang mengandung keyword terbanyak atau kecocokan parsial
@@ -528,26 +618,33 @@ export default function App() {
       let best = 0;
       for (const v of transcriptVariants) {
         if (v.length < 2) continue;
-        if (v === skuA) best = Math.max(best, 100 + v.length);
-        else if (skuA.includes(v) || v.includes(skuA)) best = Math.max(best, 50 + Math.min(v.length, skuA.length));
-        else if (nameA.includes(v)) best = Math.max(best, 20 + v.length);
+        if (skuA) {
+          if (v === skuA) best = Math.max(best, 100 + v.length);
+          else if (skuA.includes(v) || v.includes(skuA)) best = Math.max(best, 50 + Math.min(v.length, skuA.length));
+        }
+        if (nameA.includes(v)) best = Math.max(best, 40 + v.length);
+      }
+      // Kecocokan frasa utuh dengan nama barang (menangani perintah yang memuat nama lengkap)
+      if (compactPhrase.length >= 3) {
+        if (nameA.includes(compactPhrase)) best = Math.max(best, 60 + compactPhrase.length);
+        else if (compactPhrase.includes(nameA)) best = Math.max(best, 90 + nameA.length);
       }
       return best;
     };
 
-    let match = inventory.find(item => {
+    let match = inventory.find((item) => {
       const itemName = item.name.toLowerCase();
       const itemSku = item.sku.toLowerCase();
-      
+
       // 1. Cek apakah keyword murni ada di nama barang (Partial Match)
-      const hasKeywordMatch = keywords.length > 0 && keywords.some(kw => itemName.includes(kw) || itemSku.includes(kw));
-      
+      const hasKeywordMatch = keywords.length > 0 && keywords.some((kw) => itemName.includes(kw) || (itemSku && itemSku.includes(kw)));
+
       // 2. Cek apakah seluruh kalimat mengandung nama barang atau SKU
-      const hasFullMatch = lowerText.includes(itemName) || lowerText.includes(itemSku);
-      
+      const hasFullMatch = lowerText.includes(itemName) || Boolean(itemSku && itemSku.length >= 3 && lowerText.includes(itemSku));
+
       // 3. Cek apakah nama barang mengandung seluruh kalimat (kebalikan dari #2)
-      const hasReverseMatch = itemName.includes(lowerText) || itemSku.includes(lowerText);
-      
+      const hasReverseMatch = itemName.includes(lowerText) || Boolean(itemSku && itemSku.includes(lowerText));
+
       return hasKeywordMatch || hasFullMatch || hasReverseMatch;
     });
 
@@ -605,7 +702,7 @@ export default function App() {
       utterance.rate = 0.86;
       utterance.pitch = 1;
       utterance.volume = 1;
-      // Edge: set `voice` sering bikin gagal diam / salah engine; cukup pakai lang + suara default.
+      // Edge: set `voice` sering membuat gagal diam / salah engine; cukup pakai lang + suara default.
       if (!edge) {
         const voice = pickIndonesianVoice();
         if (voice) utterance.voice = voice;
@@ -641,9 +738,9 @@ export default function App() {
       timestamp: new Date().toLocaleTimeString(),
       command,
       match,
-      status
+      status,
     };
-    setLogs(prev => [newLog, ...prev].slice(0, 50));
+    setLogs((prev) => [newLog, ...prev].slice(0, 50));
   };
 
   const toggleListening = () => {
@@ -676,141 +773,140 @@ export default function App() {
     }
 
     const startRecognitionSession = () => {
-    try {
-      const recognition = new Ctor();
-      let lastProcessedTranscript = '';
-      let hasTriggeredSearch = false;
-      let heardSpeech = false;
-
-      /** Gabungkan segmen; pilih alternatif STT dengan confidence tertinggi per segmen (WebKit). */
-      const transcriptFromEvent = (event: any) => {
-        let line = '';
-        for (let i = 0; i < event.results.length; i++) {
-          const slice = event.results[i];
-          const nAlt = typeof slice.length === 'number' ? slice.length : 1;
-          let bestJ = 0;
-          let bestConf = -1;
-          for (let j = 0; j < nAlt; j++) {
-            const alt = slice[j];
-            const c = typeof alt?.confidence === 'number' ? alt.confidence : 0;
-            if (c > bestConf) {
-              bestConf = c;
-              bestJ = j;
-            }
-          }
-          line += slice[bestJ]?.transcript ?? '';
-        }
-        return line.trim();
-      };
-
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = speechRecognitionLang;
       try {
-        // Edge Chromium kadang tidak mengisi alternatif; nilai besar aman di try/catch.
-        recognition.maxAlternatives = isChromiumEdge() ? 3 : 5;
-      } catch (_) {}
+        const recognition = new Ctor();
+        let lastProcessedTranscript = '';
+        let hasTriggeredSearch = false;
+        let heardSpeech = false;
 
-      const triggerSearch = (text: string) => {
-        if (hasTriggeredSearch || !text.trim()) return;
-        hasTriggeredSearch = true;
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = null;
-        }
-        const picked = pickBestTranscriptForSearch(text, lastRecognitionEventRef.current, inventory);
-        setTranscript(picked);
-        try {
-          recognition.stop();
-        } catch (_) {}
-        handleVoiceSearch(picked);
-      };
-
-      const scheduleEndAfterSilence = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(() => {
-          console.log('Silence detected, processing full transcript...');
-          triggerSearch(lastProcessedTranscript);
-        }, VOICE_END_SILENCE_MS);
-      };
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        setTranscript('Mulai mendengarkan...');
-      };
-
-      recognition.onspeechstart = () => {
-        heardSpeech = true;
-      };
-
-      recognition.onsoundstart = () => {
-        setTranscript('Suara terdeteksi...');
-      };
-
-      recognition.onresult = (event: any) => {
-        lastRecognitionEventRef.current = event;
-        const combined = transcriptFromEvent(event);
-        if (!combined) return;
-
-        lastProcessedTranscript = combined;
-        heardSpeech = true;
-        setTranscript(combined + (event.results[event.results.length - 1].isFinal ? '' : '…'));
-        // Jangan proses di isFinal — WebKit menandai final terlalu awal; tunggu jeda bicara.
-        scheduleEndAfterSilence();
-      };
-
-      recognition.onend = () => {
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = null;
-        }
-        // Akhir sesi tanpa timer (mis. diputus browser): proses jika ada teks dan belum diproses
-        if (!hasTriggeredSearch && lastProcessedTranscript) {
-          triggerSearch(lastProcessedTranscript);
-        }
-        setIsListening(false);
-      };
-
-      recognition.onerror = (event: any) => {
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = null;
-        }
-        console.error('Recognition Error:', event.error);
-        setIsListening(false);
-        
-        if (event.error === 'not-allowed') {
-          setErrorMessage(
-            isChromiumEdge()
-              ? 'Mikrofon ditolak. Di Edge: ikon gembok di alamat → Izin untuk situs ini → Mikrofon → Izinkan.'
-              : 'Izin mikrofon ditolak. Cek pengaturan mikrofon peramban Anda.'
-          );
-        } else if (event.error === 'no-speech') {
-          if (!heardSpeech && !lastProcessedTranscript) {
-            setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
+        /** Gabungkan segmen; pilih alternatif STT dengan confidence tertinggi per segmen (WebKit). */
+        const transcriptFromEvent = (event: any) => {
+          let line = '';
+          for (let i = 0; i < event.results.length; i++) {
+            const slice = event.results[i];
+            const nAlt = typeof slice.length === 'number' ? slice.length : 1;
+            let bestJ = 0;
+            let bestConf = -1;
+            for (let j = 0; j < nAlt; j++) {
+              const alt = slice[j];
+              const c = typeof alt?.confidence === 'number' ? alt.confidence : 0;
+              if (c > bestConf) {
+                bestConf = c;
+                bestJ = j;
+              }
+            }
+            line += slice[bestJ]?.transcript ?? '';
           }
-        } else if (event.error === 'aborted') {
-          // User menutup mic — tidak perlu pesan
-        } else if (event.error === 'network') {
-          setErrorMessage(
-            isChromiumEdge()
-              ? 'Layanan ucapan Edge butuh internet. Cek koneksi, nonaktifkan VPN, atau di edge://settings/languages aktifkan layanan bicara online.'
-              : 'Koneksi internet bermasalah.'
-          );
-        } else {
-          setErrorMessage(`Gagal (${event.error}). Coba refresh halaman.`);
-        }
-      };
+          return line.trim();
+        };
 
-      recognitionRef.current = recognition;
-      setVoiceResult(null);
-      recognition.start();
-      
-    } catch (error) {
-      console.error('Critical Start Error:', error);
-      setErrorMessage('Gagal menjalankan perekam suara.');
-      setIsListening(false);
-    }
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = speechRecognitionLang;
+        try {
+          // Chrome kadang tidak mengisi alternatif; nilai besar aman di try/catch.
+          recognition.maxAlternatives = isChromiumEdge() ? 3 : 5;
+        } catch (_) {}
+
+        const triggerSearch = (text: string) => {
+          if (hasTriggeredSearch || !text.trim()) return;
+          hasTriggeredSearch = true;
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+          const picked = pickBestTranscriptForSearch(text, lastRecognitionEventRef.current, inventory);
+          setTranscript(picked);
+          try {
+            recognition.stop();
+          } catch (_) {}
+          handleVoiceSearch(picked);
+        };
+
+        const scheduleEndAfterSilence = () => {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = setTimeout(() => {
+            console.log('Silence detected, processing full transcript...');
+            triggerSearch(lastProcessedTranscript);
+          }, VOICE_END_SILENCE_MS);
+        };
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          setTranscript('Mulai mendengarkan...');
+        };
+
+        recognition.onspeechstart = () => {
+          heardSpeech = true;
+        };
+
+        recognition.onsoundstart = () => {
+          setTranscript('Suara terdeteksi...');
+        };
+
+        recognition.onresult = (event: any) => {
+          lastRecognitionEventRef.current = event;
+          const combined = transcriptFromEvent(event);
+          if (!combined) return;
+
+          lastProcessedTranscript = combined;
+          heardSpeech = true;
+          setTranscript(combined + (event.results[event.results.length - 1].isFinal ? '' : '…'));
+          // Jangan proses di isFinal — WebKit menandai final terlalu awal; tunggu jeda bicara.
+          scheduleEndAfterSilence();
+        };
+
+        recognition.onend = () => {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+          // Akhir sesi tanpa timer (mis. diputus browser): proses jika ada teks dan belum diproses
+          if (!hasTriggeredSearch && lastProcessedTranscript) {
+            triggerSearch(lastProcessedTranscript);
+          }
+          setIsListening(false);
+        };
+
+        recognition.onerror = (event: any) => {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+          console.error('Recognition Error:', event.error);
+          setIsListening(false);
+
+          if (event.error === 'not-allowed') {
+            setErrorMessage(
+              isChromiumEdge()
+                ? 'Mikrofon ditolak. Di Edge: ikon gembok di alamat → Izin untuk situs ini → Mikrofon → Izinkan.'
+                : 'Izin mikrofon ditolak. Cek pengaturan mikrofon peramban Anda.'
+            );
+          } else if (event.error === 'no-speech') {
+            if (!heardSpeech && !lastProcessedTranscript) {
+              setErrorMessage('Tidak ada suara terdeteksi. Coba bicara lebih keras.');
+            }
+          } else if (event.error === 'aborted') {
+            // User menutup mic — tidak perlu pesan
+          } else if (event.error === 'network') {
+            setErrorMessage(
+              isChromiumEdge()
+                ? 'Layanan ucapan Edge butuh internet. Cek koneksi, nonaktifkan VPN, atau di edge://settings/languages aktifkan layanan bicara online.'
+                : 'Koneksi internet bermasalah.'
+            );
+          } else {
+            setErrorMessage(`Gagal (${event.error}). Coba refresh halaman.`);
+          }
+        };
+
+        recognitionRef.current = recognition;
+        setVoiceResult(null);
+        recognition.start();
+      } catch (error) {
+        console.error('Critical Start Error:', error);
+        setErrorMessage('Gagal menjalankan perekam suara.');
+        setIsListening(false);
+      }
     };
 
     if (isChromiumEdge() && navigator.mediaDevices?.getUserMedia) {
@@ -822,7 +918,7 @@ export default function App() {
         })
         .catch(() => {
           setErrorMessage(
-            'Edge: izinkan mikrofon untuk situs ini (ikon gembok → Mikrofon), lalu ketuk mic lagi.'
+            'Edge: izinkan mikrofon untuk situs ini (ikon kunci → Mikrofon), lalu ketuk mic lagi.'
           );
         });
       return;
@@ -832,10 +928,10 @@ export default function App() {
   };
 
   // --- Filtered Inventory ---
-  
+
   const filteredInventory = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    return inventory.filter(item => {
+    return inventory.filter((item) => {
       if (!itemMatchesInventoryLineFilter(item.name, inventoryLineFilter)) return false;
       if (!q) return true;
       return (
@@ -848,145 +944,225 @@ export default function App() {
 
   // --- UI Components ---
 
-  const NavButton = ({ tab, icon: Icon, label }: { tab: typeof activeTab, icon: any, label: string }) => (
-    <button 
+  const NavButton = ({ tab, icon: Icon, label }: { tab: typeof activeTab; icon: any; label: string }) => (
+    <button
       onClick={() => setActiveTab(tab)}
-      className={`cursor-pointer relative flex flex-col items-center gap-1 transition-all duration-300 ${
-        activeTab === tab ? 'text-orange-500' : 'text-slate-400 hover:text-slate-800'
+      className={`focus-ring relative flex cursor-pointer flex-col items-center gap-1 rounded-2xl px-4 py-2 transition-all duration-300 ${
+        activeTab === tab ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
       }`}
     >
-      <Icon size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />
-      <span className="text-[10px] font-bold uppercase tracking-widest">{label}</span>
       {activeTab === tab && (
-        <motion.div 
+        <motion.div
           layoutId="nav-indicator"
-          className="absolute -bottom-2 w-1 h-1 bg-orange-500 rounded-full"
+          className="absolute inset-0 rounded-2xl bg-emerald-500/10 dark:bg-emerald-400/10"
+          transition={{ type: 'spring', stiffness: 400, damping: 32 }}
         />
       )}
+      <Icon size={22} strokeWidth={activeTab === tab ? 2.5 : 2} className="relative z-10 transition-colors" />
+      <span className="relative z-10 text-[10px] font-bold uppercase tracking-widest">{label}</span>
     </button>
   );
 
+  const statusChip = (status?: string) => {
+    if (status === 'low')
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300';
+    if (status === 'critical')
+      return 'bg-red-100 text-red-700 dark:bg-red-400/15 dark:text-red-300';
+    return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300';
+  };
+
   return (
-    <div className="min-h-screen bg-orange-500 text-orange-950 font-sans selection:bg-white/30">
+    <div className="relative min-h-screen bg-slate-100 text-slate-900 transition-colors duration-500 dark:bg-[#060911] dark:text-slate-100">
+      <AmbientBackground />
+
       {/* Header */}
-      <header className="fixed top-0 w-full h-16 bg-orange-500/90 backdrop-blur-md z-50 flex items-center justify-between px-6 border-b border-orange-400">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-white/20 rounded-lg">
-            <Package className="text-white" size={20} />
+      <header className="fixed top-0 z-50 w-full border-b border-slate-200/70 bg-white/60 backdrop-blur-2xl dark:border-white/10 dark:bg-[#060911]/60">
+        <div className="mx-auto flex h-16 max-w-4xl items-center justify-between px-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 items-center justify-center overflow-hidden rounded-xl">
+              <img src={logo} alt="QC MCR" className="h-8 w-auto object-contain" />
+            </div>
+            <div className="leading-tight">
+              <h1 className="text-sm font-black tracking-[0.18em] uppercase">QC MCR</h1>
+              <p className="text-[9px] font-semibold uppercase tracking-[0.25em] text-slate-400 dark:text-slate-500">
+                Voice Inventory
+              </p>
+            </div>
           </div>
-          <h1 className="text-sm font-black tracking-[0.2em] uppercase text-white">QC MCR</h1>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 px-3 py-1 bg-white/20 rounded-full">
-            <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-            <span className="text-[10px] font-bold text-white uppercase tracking-widest">System Ready</span>
-          </div>
-          <div className="w-8 h-8 rounded-full bg-orange-600 border border-orange-400 flex items-center justify-center overflow-hidden">
-            <User size={16} className="text-white" />
+
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 rounded-full border border-slate-200/70 bg-white/60 px-3 py-1.5 backdrop-blur sm:flex dark:border-white/10 dark:bg-white/5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px] shadow-emerald-500/60" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                Ready
+              </span>
+            </div>
+            <button
+              onClick={() => setDark(!dark)}
+              aria-label="Ganti tema"
+              className="focus-ring flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-slate-200/70 bg-white/60 text-slate-500 backdrop-blur transition-colors hover:text-emerald-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
+            >
+              {dark ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 text-white shadow-md">
+              <User size={16} />
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="pt-24 pb-32 px-6 max-w-4xl mx-auto">
+      <main className="mx-auto max-w-4xl px-5 pt-24 pb-32">
         <AnimatePresence mode="wait">
           {activeTab === 'voice' && (
-            <motion.div 
+            <motion.div
               key="voice"
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex flex-col items-center gap-12"
+              exit={{ opacity: 0, y: -16 }}
+              transition={{ duration: 0.35, ease: 'easeOut' }}
+              className="flex flex-col items-center gap-10"
             >
-              <div className="text-center space-y-2">
-                <h2 className="text-3xl font-extrabold tracking-tight text-white">Voice Command</h2>
-                <p className="text-orange-100 text-sm">Sebutkan nama barang untuk mencari lokasi</p>
+              <div className="space-y-2 text-center">
+                <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+                  <span className="text-gradient">Voice Command</span>
+                </h2>
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                  Sebutkan nama barang untuk menemukan lokasinya
+                </p>
               </div>
 
               {/* Mic Button */}
               <div className="relative">
                 <AnimatePresence>
                   {isListening && (
-                    <motion.div 
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1.5, opacity: 0.2 }}
-                      exit={{ scale: 0.8, opacity: 0 }}
-                      transition={{ repeat: Infinity, duration: 1.5 }}
-                      className="absolute inset-0 bg-amber-500 rounded-full"
-                    />
+                    <>
+                      <motion.div
+                        key="ring-1"
+                        initial={{ scale: 0.8, opacity: 0.6 }}
+                        animate={{ scale: 1.9, opacity: 0 }}
+                        transition={{ repeat: Infinity, duration: 1.6, ease: 'easeOut' }}
+                        className="absolute inset-0 rounded-full bg-emerald-400/40"
+                      />
+                      <motion.div
+                        key="ring-2"
+                        initial={{ scale: 0.8, opacity: 0.5 }}
+                        animate={{ scale: 1.6, opacity: 0 }}
+                        transition={{ repeat: Infinity, duration: 1.6, delay: 0.4, ease: 'easeOut' }}
+                        className="absolute inset-0 rounded-full bg-teal-400/40"
+                      />
+                    </>
                   )}
                 </AnimatePresence>
-                <button 
+                <motion.button
                   onClick={toggleListening}
-                  className={`cursor-pointer relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
-                    isListening 
-                      ? 'bg-white text-orange-500 shadow-[0_0_40px_rgba(255,255,255,0.4)]' 
-                      : 'bg-white text-orange-400 border border-transparent shadow-xl hover:shadow-2xl'
+                  whileTap={{ scale: 0.94 }}
+                  aria-label="Cari lewat suara"
+                  className={`focus-ring relative z-10 flex h-24 w-24 cursor-pointer items-center justify-center rounded-full transition-all duration-500 ${
+                    isListening
+                      ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_0_60px] shadow-emerald-500/50'
+                      : 'bg-white text-emerald-500 shadow-xl ring-1 ring-slate-200/80 hover:shadow-2xl dark:bg-white/10 dark:text-emerald-400 dark:ring-white/10'
                   }`}
                 >
-                  <Mic size={40} strokeWidth={2.5} />
-                </button>
+                  <Mic size={36} strokeWidth={2.2} />
+                </motion.button>
               </div>
 
-              <div className="w-full space-y-6">
-                {/* Error Message Display */}
+              <div className="w-full space-y-5">
+                {/* Error Message */}
                 {errorMessage && (
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.9 }}
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-center gap-3 text-red-500 text-xs"
+                    className="glass-subtle flex items-start gap-3 rounded-2xl border-red-300/60 p-4 text-red-600 dark:border-red-400/20 dark:text-red-300"
                   >
-                    <AlertTriangle size={16} />
-                    <p>{errorMessage}</p>
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                    <p className="text-xs leading-relaxed">{errorMessage}</p>
                   </motion.div>
                 )}
 
-                {/* Transcript Display */}
-                <div className="bg-white p-6 rounded-2xl shadow-xl border border-transparent text-center min-h-20 flex items-center justify-center">
-                  {transcript ? (
-                    <p className="text-lg font-medium italic text-orange-950">"{transcript}"</p>
-                  ) : (
-                    <p className="text-slate-400 text-sm italic">Menunggu perintah suara...</p>
-                  )}
+                {/* Transcript */}
+                <div className="glass-subtle min-h-16 p-5">
+                  <div className="flex items-center justify-center gap-3">
+                    {isListening && (
+                      <div className="flex items-end gap-[3px]">
+                        {[0, 1, 2, 3].map((i) => (
+                          <motion.span
+                            key={i}
+                            className="w-1 rounded-full bg-emerald-400"
+                            animate={{ height: [6, 18, 6] }}
+                            transition={{ repeat: Infinity, duration: 0.9, delay: i * 0.15, ease: 'easeInOut' }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {transcript ? (
+                      <p className="text-sm italic text-slate-700 dark:text-slate-200">&quot;{transcript}&quot;</p>
+                    ) : (
+                      <p className="text-sm italic text-slate-400 dark:text-slate-500">Menunggu perintah suara...</p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Result Card */}
-                {voiceResult && (
-                  <motion.div 
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="bg-white p-8 rounded-3xl text-orange-950 shadow-xl"
-                  >
-                    <div className="flex justify-between items-start mb-6">
-                      <div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Barang Ditemukan</span>
-                        <h3 className="text-3xl font-black tracking-tighter text-slate-800">{voiceResult.name}</h3>
+                <AnimatePresence>
+                  {voiceResult && (
+                    <motion.div
+                      key={voiceResult.id}
+                      initial={{ scale: 0.92, opacity: 0, y: 8 }}
+                      animate={{ scale: 1, opacity: 1, y: 0 }}
+                      exit={{ scale: 0.96, opacity: 0 }}
+                      transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+                      className="glass relative overflow-hidden rounded-3xl p-7"
+                    >
+                      <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-emerald-400/20 blur-3xl dark:bg-emerald-400/10" />
+                      <div className="relative">
+                        <div className="mb-4 flex items-center justify-between gap-3">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
+                            <CheckCircle2 size={12} /> Barang Ditemukan
+                          </span>
+                          <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                            SKU {voiceResult.sku}
+                          </span>
+                        </div>
+
+                        <h3 className="text-2xl font-black tracking-tight sm:text-3xl">{voiceResult.name}</h3>
+
+                        <div className="mt-6 flex items-center gap-4 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 p-4 text-white shadow-lg shadow-emerald-500/25">
+                          <MapPin size={22} strokeWidth={2.4} />
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">
+                              Lokasi Rak
+                            </p>
+                            <p className="text-lg font-black tracking-wider">{voiceResult.rack}</p>
+                          </div>
+                        </div>
                       </div>
-                      <div className="bg-orange-100 p-2 rounded-xl text-orange-500">
-                        <CheckCircle2 size={24} />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Lokasi Rak</p>
-                        <p className="text-xl font-black text-orange-600">{voiceResult.rack}</p>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </motion.div>
           )}
 
           {activeTab === 'inventory' && (
-            <motion.div 
+            <motion.div
               key="inventory"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
               className="space-y-6"
             >
               <div className="flex flex-col gap-4">
-                <h2 className="text-2xl font-bold text-white">Inventory List</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-extrabold tracking-tight">Inventory</h2>
+                  <span className="rounded-xl border border-slate-200/70 bg-white/60 px-3 py-1.5 text-xs font-bold backdrop-blur dark:border-white/10 dark:bg-white/5">
+                    {filteredInventory.length} item
+                  </span>
+                </div>
+
+                {/* Filter pills */}
                 <div className="flex flex-wrap gap-2">
                   {(
                     [
@@ -999,211 +1175,263 @@ export default function App() {
                       key={id}
                       type="button"
                       onClick={() => setInventoryLineFilter(id)}
-                      className={`rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all ${
+                      className={`focus-ring cursor-pointer rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all duration-200 ${
                         inventoryLineFilter === id
-                          ? 'bg-white text-orange-600 shadow-lg'
-                          : 'bg-white/15 text-white hover:bg-white/25'
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/25'
+                          : 'border border-slate-200/70 bg-white/60 text-slate-600 backdrop-blur hover:text-emerald-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300'
                       }`}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
+
+                {/* Search */}
                 <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input 
+                  <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
                     type="text"
                     placeholder="Cari nama, SKU, atau rak..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-white text-orange-950 border-none shadow-xl rounded-xl py-4 pl-12 pr-4 text-sm focus:ring-2 focus:ring-white/80 transition-all outline-none placeholder:text-slate-400"
+                    className="focus-ring w-full rounded-2xl border border-slate-200/70 bg-white/70 py-4 pl-12 pr-4 text-sm shadow-lg shadow-slate-200/40 outline-none backdrop-blur placeholder:text-slate-400 transition-all focus:border-emerald-400 dark:border-white/10 dark:bg-white/5 dark:shadow-none"
                   />
                 </div>
               </div>
 
+              {/* Item list */}
               <div className="grid gap-4">
-                {filteredInventory.map(item => (
-                  <div key={item.id} className="cursor-pointer bg-white p-5 rounded-2xl shadow-lg border border-transparent hover:border-orange-200 transition-all group">
-                    <div className="flex justify-between items-start">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-lg text-slate-800">{item.name}</h3>
-                          <span className="text-[10px] font-mono bg-slate-100 px-2 py-0.5 rounded text-slate-500">{item.sku}</span>
+                {filteredInventory.map((item) => (
+                  <motion.div
+                    key={item.id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className="glass group relative cursor-pointer overflow-hidden rounded-2xl p-5 transition-transform duration-300 hover:-translate-y-0.5"
+                  >
+                    <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-emerald-500 to-teal-600 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="truncate text-base font-bold">{item.name}</h3>
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-500 dark:bg-white/10 dark:text-slate-300">
+                            {item.sku}
+                          </span>
                         </div>
                       </div>
-                      <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
-                        item.status === 'Nifco Product' ? 'bg-emerald-100 text-emerald-600' :
-                        item.status === 'low' ? 'bg-orange-100 text-orange-600' :
-                        'bg-red-100 text-red-600'
-                      }`}>
-                        {item.status}
-                      </div>
+                      <span className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${statusChip(item.status)}`}>
+                        {item.status ?? 'Nifco Product'}
+                      </span>
                     </div>
-                    <div className="mt-6 flex justify-between items-end">
-                      <div>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Lokasi</p>
-                        <p className="font-bold text-orange-500">{item.rack}</p>
-                      </div>
+                    <div className="mt-5 flex items-center gap-2 text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                      <MapPin size={15} />
+                      {item.rack}
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
-              </div>
-            </motion.div>
-          )}
 
-          {activeTab === 'logs' && (
-            <motion.div 
-              key="logs"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="space-y-6"
-            >
-              <h2 className="text-2xl font-bold text-white">Activity Logs</h2>
-              <div className="space-y-3">
-                {logs.length === 0 ? (
-                  <div className="text-center py-12 text-orange-100">Belum ada aktivitas suara</div>
-                ) : (
-                  logs.map(log => (
-                    <div key={log.id} className="bg-white shadow-md p-4 rounded-xl border border-transparent flex items-center gap-4">
-                      <div className={`p-2 rounded-lg ${
-                        log.status === 'success' ? 'bg-emerald-100 text-emerald-600' :
-                        log.status === 'not_found' ? 'bg-orange-100 text-orange-600' :
-                        'bg-red-100 text-red-600'
-                      }`}>
-                        {log.status === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-slate-800">"{log.command}"</p>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">
-                          {log.timestamp} • {log.status === 'success' ? `Matched: ${log.match}` : 'No Match Found'}
-                        </p>
-                      </div>
-                    </div>
-                  ))
+                {filteredInventory.length === 0 && (
+                  <div className="glass flex flex-col items-center gap-3 rounded-3xl py-14 text-center">
+                    <Boxes size={36} className="text-slate-300 dark:text-slate-600" />
+                    <p className="text-sm font-medium text-slate-400">Tidak ada item ditemukan</p>
+                  </div>
                 )}
               </div>
             </motion.div>
           )}
 
-          {activeTab === 'settings' && (
-            <motion.div 
-              key="settings"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="space-y-8"
+          {activeTab === 'logs' && (
+            <motion.div
+              key="logs"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
             >
-              <h2 className="text-2xl font-bold text-white">Settings</h2>
-              
+              <h2 className="text-2xl font-extrabold tracking-tight">Activity Logs</h2>
+
+              {logs.length === 0 ? (
+                <div className="glass flex flex-col items-center gap-3 rounded-3xl py-16 text-center">
+                  <Clock3 size={38} className="text-slate-300 dark:text-slate-600" />
+                  <p className="text-sm font-medium text-slate-400">Belum ada aktivitas suara</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {logs.map((log) => (
+                    <motion.div
+                      key={log.id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="glass-subtle flex items-center gap-4 rounded-2xl p-4"
+                    >
+                      <div
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                          log.status === 'success'
+                            ? 'bg-emerald-500/15 text-emerald-500'
+                            : log.status === 'not_found'
+                              ? 'bg-amber-500/15 text-amber-500'
+                              : 'bg-red-500/15 text-red-500'
+                        }`}
+                      >
+                        {log.status === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">&quot;{log.command}&quot;</p>
+                        <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                          {log.timestamp} ·{' '}
+                          {log.status === 'success' ? `Matched: ${log.match}` : 'No Match Found'}
+                        </p>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === 'settings' && (
+            <motion.div
+              key="settings"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+              className="space-y-6"
+            >
+              <h2 className="text-2xl font-extrabold tracking-tight">Settings</h2>
+
               {/* Profile Card */}
-              <div className="bg-white p-6 shadow-md rounded-2xl border border-transparent flex items-center gap-6">
-                <div className="w-16 h-16 rounded-2xl bg-orange-100 flex items-center justify-center text-orange-600">
-                  <User size={32} strokeWidth={2.5} />
+              <div className="glass flex items-center gap-5 rounded-3xl p-6">
+                <div className="relative">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg shadow-amber-500/30">
+                    <User size={30} strokeWidth={2.5} />
+                  </div>
+                  <span className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-white bg-emerald-500 dark:border-[#060911]" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-slate-800">Alvin P</h3>
-                  <p className="text-slate-500 text-sm">QC MCR</p>
+                  <h3 className="text-xl font-bold">Alvin P</h3>
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Quality Control · MCR</p>
                 </div>
               </div>
 
-              {/* Google Sheets Integration Status */}
-              <div className="bg-white p-6 shadow-md rounded-2xl border border-transparent space-y-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-3">
-                    <Database className="text-orange-500" size={20} />
-                    <h3 className="font-bold text-slate-800">Google Sheets API</h3>
+              {/* Tampilan */}
+              <div className="glass flex items-center justify-between gap-4 rounded-3xl p-5">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-500">
+                    {dark ? <Moon size={20} /> : <Sun size={20} />}
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${inventory.length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                  <div>
+                    <p className="text-sm font-bold">Tema Tampilan</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {dark ? 'Mode gelap' : 'Mode terang'}
+                    </p>
+                  </div>
                 </div>
-                
-                <div className="space-y-3">
-                  <p className="text-xs text-slate-500">Masukkan URL Web App dari Google Apps Script:</p>
-                  <input 
-                    type="text"
-                    placeholder="https://script.google.com/macros/s/.../exec"
-                    value={sheetUrl}
-                    onChange={(e) => setSheetUrl(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-mono text-orange-600 focus:ring-1 focus:ring-orange-500 transition-all outline-none"
+                <Theme on={!dark} onToggle={() => setDark(!dark)} label="Toggle tema" />
+              </div>
+
+              {/* Excel Data Source */}
+              <div className="glass space-y-4 rounded-3xl p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-500">
+                      <Database size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold">Sumber Data Excel</h3>
+                      <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                        data/inventory.xlsx
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${
+                      inventory.length > 0 ? 'bg-emerald-500 shadow-[0_0_8px] shadow-emerald-500/60' : 'bg-red-500'
+                    }`}
                   />
-                  <button 
-                    onClick={handleSaveUrl}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/70 bg-white/50 p-4 backdrop-blur dark:border-white/10 dark:bg-white/[0.03]">
+                  <div className="space-y-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                    <div className="flex justify-between">
+                      <span>Status Koneksi</span>
+                      <span className={inventory.length > 0 ? 'text-emerald-500' : 'text-red-500'}>
+                        {inventory.length > 0 ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Items</span>
+                      <span className="font-black text-emerald-500">{inventory.length}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={fetchData}
                     disabled={isSyncing}
-                    className="cursor-pointer w-full py-3 bg-orange-500 text-white shadow-md rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 hover:bg-orange-600 transition-all disabled:opacity-50"
+                    className="focus-ring mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 py-3 text-[11px] font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-500/25 transition-all hover:brightness-110 disabled:opacity-50"
                   >
-                    {isSyncing ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    {isSyncing ? 'Syncing...' : 'Save & Sync Data'}
+                    <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                    {isSyncing ? 'Loading...' : 'Refresh Data'}
                   </button>
                 </div>
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                    <span>Status Koneksi</span>
-                    <span className={inventory.length > 0 ? 'text-emerald-500' : 'text-red-500'}>
-                      {inventory.length > 0 ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                    <span>Total Items</span>
-                    <span className="text-orange-600 font-black">{inventory.length}</span>
-                  </div>
-                </div>
               </div>
 
-              {/* Controls */}
+              {/* Voice */}
               <div className="space-y-4">
-                <div className="bg-white p-5 shadow-md rounded-2xl border border-transparent flex items-center justify-between">
+                <div className="glass flex items-center justify-between gap-4 rounded-3xl p-5">
                   <div className="flex items-center gap-4">
-                    <div className="p-2 bg-orange-100 rounded-lg text-orange-600">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-500">
                       {voiceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
                     </div>
                     <div>
-                      <p className="font-bold text-slate-800">Voice Feedback</p>
-                      <p className="text-xs text-slate-500">Bacakan hasil pencarian otomatis</p>
+                      <p className="text-sm font-bold">Voice Feedback</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Bacakan hasil pencarian otomatis
+                      </p>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setVoiceEnabled(!voiceEnabled)}
-                    className={`cursor-pointer w-12 h-6 rounded-full relative transition-all duration-300 ${voiceEnabled ? 'bg-orange-500' : 'bg-slate-300'}`}
-                  >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-300 ${voiceEnabled ? 'right-1' : 'left-1'}`} />
-                  </button>
+                  <Theme
+                    on={voiceEnabled}
+                    onToggle={() => setVoiceEnabled(!voiceEnabled)}
+                    label="Toggle voice feedback"
+                  />
                 </div>
 
-                <div className="bg-white p-5 shadow-md rounded-2xl border border-transparent space-y-3">
+                <div className="glass space-y-4 rounded-3xl p-5">
                   <div>
-                    <p className="font-bold text-slate-800">Bahasa mikrofon (pengenalan suara)</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Safari sering salah dengar kode seperti J0 jika pakai Indonesia saja (mis. terdengar &quot;journal&quot;).
-                      Untuk SKU huruf+angka, coba <span className="font-semibold text-slate-700">English (US)</span>.
+                    <p className="text-sm font-bold">Bahasa Mikrofon</p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Safari sering salah dengar kode seperti J0 jika menggunakan Indonesia saja. Untuk SKU
+                      huruf+angka, coba English (US).
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSpeechRecognitionLang('id-ID')}
-                      className={`cursor-pointer flex-1 rounded-xl py-3 text-xs font-bold uppercase tracking-wide transition-all ${
-                        speechRecognitionLang === 'id-ID'
-                          ? 'bg-orange-500 text-white shadow-md'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Indonesia
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSpeechRecognitionLang('en-US')}
-                      className={`cursor-pointer flex-1 rounded-xl py-3 text-xs font-bold uppercase tracking-wide transition-all ${
-                        speechRecognitionLang === 'en-US'
-                          ? 'bg-orange-500 text-white shadow-md'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      English (US)
-                    </button>
+                    {(
+                      [
+                        { id: 'id-ID' as const, label: 'Indonesia' },
+                        { id: 'en-US' as const, label: 'English (US)' },
+                      ] as const
+                    ).map(({ id, label }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setSpeechRecognitionLang(id)}
+                        className={`focus-ring flex-1 cursor-pointer rounded-xl py-3 text-xs font-bold uppercase tracking-wide transition-all duration-200 ${
+                          speechRecognitionLang === id
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/25'
+                            : 'border border-slate-200/70 bg-white/50 text-slate-600 backdrop-blur hover:border-emerald-400/50 dark:border-white/10 dark:bg-white/5 dark:text-slate-300'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              <button className="cursor-pointer w-full py-4 bg-white text-red-500 shadow-md rounded-2xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2 hover:bg-red-50 transition-all">
+              <button className="focus-ring flex w-full cursor-pointer items-center justify-center gap-2 rounded-3xl border border-red-300/60 bg-white/50 py-4 text-xs font-black uppercase tracking-widest text-red-600 backdrop-blur transition-all hover:bg-red-50 dark:border-red-400/20 dark:bg-white/[0.03] dark:text-red-400 dark:hover:bg-red-500/10">
                 <LogOut size={16} />
                 Logout Session
               </button>
@@ -1213,9 +1441,9 @@ export default function App() {
       </main>
 
       {/* Floating Bottom Navigation */}
-      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-white/90 backdrop-blur-xl border border-transparent rounded-full py-4 px-8 shadow-[0_20px_50px_rgba(234,88,12,0.3)] z-50">
-        <div className="flex justify-between items-center">
-          <NavButton tab="inventory" icon={Package} label="Items" />
+      <nav className="fixed bottom-6 left-1/2 z-50 w-[92%] max-w-md -translate-x-1/2">
+        <div className="glass flex items-center justify-between rounded-[1.75rem] px-3 py-2">
+          <NavButton tab="inventory" icon={Boxes} label="Items" />
           <NavButton tab="voice" icon={Mic} label="Voice" />
           <NavButton tab="logs" icon={History} label="Logs" />
           <NavButton tab="settings" icon={Settings} label="Config" />

@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
@@ -16,6 +16,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.14.0",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "framer-motion": "^12.38.0",
     "google-auth-library": "^10.6.2",
