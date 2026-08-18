@@ -1,12 +1,29 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 
 dotenv.config();
 
 const INVENTORY_FILE = path.join(process.cwd(), "data", "inventory.xlsx");
+const SETTINGS_FILE = path.join(process.cwd(), "data", "settings.json");
+
+async function readSettings() {
+  try {
+    const raw = await fs.promises.readFile(SETTINGS_FILE, "utf-8");
+    const data = JSON.parse(raw);
+    return { sttLang: data.sttLang === "en-US" ? "en-US" : "id-ID" };
+  } catch {
+    return { sttLang: "id-ID" };
+  }
+}
+
+async function writeSettings(sttLang: "id-ID" | "en-US") {
+  await fs.promises.mkdir(path.dirname(SETTINGS_FILE), { recursive: true });
+  await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify({ sttLang }, null, 2));
+}
 
 const HEADER_MAP: Record<string, "id" | "name" | "sku" | "rack"> = {
   NO: "id",
@@ -68,6 +85,30 @@ async function startServer() {
     } catch (error) {
       console.error("Error reading inventory.xlsx:", error);
       res.status(500).json({ error: "Gagal membaca data/inventory.xlsx" });
+    }
+  });
+
+  // --- API: SETTINGS (disimpan di server agar sync antar laptop) ---
+  app.get("/api/settings", async (_req, res) => {
+    try {
+      res.json(await readSettings());
+    } catch (error) {
+      console.error("Error reading settings:", error);
+      res.status(500).json({ error: "Gagal membaca settings" });
+    }
+  });
+
+  app.put("/api/settings", async (req, res) => {
+    try {
+      const { sttLang } = req.body ?? {};
+      if (sttLang !== "id-ID" && sttLang !== "en-US") {
+        return res.status(400).json({ error: "sttLang harus id-ID atau en-US" });
+      }
+      await writeSettings(sttLang);
+      res.json({ sttLang });
+    } catch (error) {
+      console.error("Error saving settings:", error);
+      res.status(500).json({ error: "Gagal menyimpan settings" });
     }
   });
 

@@ -414,7 +414,8 @@ const itemMatchesInventoryLineFilter = (
   const n = name.trim();
   if (filter === 'all') return true;
   const upper = n.toUpperCase();
-  if (filter === 'lastshot') return upper.startsWith(INVENTORY_LINE_PREFIXES.lastshot);
+  if (filter === 'lastshot')
+    return upper.startsWith(INVENTORY_LINE_PREFIXES.lastshot) || upper.startsWith('LS');
   return upper.startsWith(INVENTORY_LINE_PREFIXES.standar.toUpperCase());
 };
 
@@ -475,6 +476,8 @@ export default function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [inventoryLineFilter, setInventoryLineFilter] = useState<'all' | 'lastshot' | 'standar'>('all');
+  const [inventoryPage, setInventoryPage] = useState(1);
+  const INVENTORY_PAGE_SIZE = 10;
   const [dark, setDark] = useState<boolean>(() => {
     try {
       const s = localStorage.getItem('mcr_theme');
@@ -563,7 +566,24 @@ export default function App() {
     try {
       localStorage.setItem('mcr_stt_lang', speechRecognitionLang);
     } catch (_) {}
+    fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sttLang: speechRecognitionLang }),
+    }).catch(() => {});
   }, [speechRecognitionLang]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        if (data && (data.sttLang === 'id-ID' || data.sttLang === 'en-US')) {
+          setSpeechRecognitionLang(data.sttLang);
+        }
+      } catch (_) {}
+    })();
+  }, []);
 
   // Safari memuat daftar suara (voices) async — pakai event agar getVoices() terisi.
   useEffect(() => {
@@ -942,6 +962,43 @@ export default function App() {
     });
   }, [inventory, searchQuery, inventoryLineFilter]);
 
+  const totalInventoryPages = Math.max(1, Math.ceil(filteredInventory.length / INVENTORY_PAGE_SIZE));
+
+  useEffect(() => {
+    setInventoryPage((page) => Math.min(page, totalInventoryPages));
+  }, [totalInventoryPages]);
+
+  useEffect(() => {
+    setInventoryPage(1);
+  }, [searchQuery, inventoryLineFilter]);
+
+  const pagedInventory = useMemo(() => {
+    const start = (inventoryPage - 1) * INVENTORY_PAGE_SIZE;
+    return filteredInventory.slice(start, start + INVENTORY_PAGE_SIZE);
+  }, [filteredInventory, inventoryPage]);
+
+  const goToInventoryPage = (page: number) => {
+    setInventoryPage(Math.min(Math.max(1, page), totalInventoryPages));
+  };
+
+  const visibleInventoryPages = useMemo(() => {
+    const pages: (number | '...')[] = [];
+    const add = (p: number) => {
+      if (p >= 1 && p <= totalInventoryPages && pages[pages.length - 1] !== p) pages.push(p);
+    };
+    add(1);
+    for (let p = inventoryPage - 2; p <= inventoryPage + 2; p++) add(p);
+    add(totalInventoryPages);
+    const spaced: (number | '...')[] = [];
+    pages.forEach((p, i) => {
+      if (i > 0 && typeof p === 'number' && typeof pages[i - 1] === 'number' && p - (pages[i - 1] as number) > 1) {
+        spaced.push('...');
+      }
+      spaced.push(p);
+    });
+    return spaced;
+  }, [inventoryPage, totalInventoryPages]);
+
   // --- UI Components ---
 
   const NavButton = ({ tab, icon: Icon, label }: { tab: typeof activeTab; icon: any; label: string }) => (
@@ -1201,7 +1258,7 @@ export default function App() {
 
               {/* Item list */}
               <div className="grid gap-4">
-                {filteredInventory.map((item) => (
+                {pagedInventory.map((item) => (
                   <motion.div
                     key={item.id}
                     layout
@@ -1239,6 +1296,53 @@ export default function App() {
                   </div>
                 )}
               </div>
+
+              {/* Pagination */}
+              {filteredInventory.length > INVENTORY_PAGE_SIZE && (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-slate-400">
+                    Menampilkan {Math.min(INVENTORY_PAGE_SIZE, filteredInventory.length)} dari {filteredInventory.length} item
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => goToInventoryPage(inventoryPage - 1)}
+                      disabled={inventoryPage === 1}
+                      className="focus-ring cursor-pointer rounded-xl border border-slate-200/70 bg-white/60 px-3 py-2 text-xs font-bold text-slate-600 backdrop-blur transition-all hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
+                    >
+                      Prev
+                    </button>
+                    {visibleInventoryPages.map((page, i) =>
+                      page === '...' ? (
+                        <span key={`ellipsis-${i}`} className="px-1 text-xs font-bold text-slate-400">
+                          …
+                        </span>
+                      ) : (
+                        <button
+                          key={page}
+                          type="button"
+                          onClick={() => goToInventoryPage(page)}
+                          className={`focus-ring h-9 w-9 cursor-pointer rounded-xl text-xs font-black transition-all duration-200 ${
+                            page === inventoryPage
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/25'
+                              : 'border border-slate-200/70 bg-white/60 text-slate-600 backdrop-blur hover:text-emerald-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      )
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => goToInventoryPage(inventoryPage + 1)}
+                      disabled={inventoryPage === totalInventoryPages}
+                      className="focus-ring cursor-pointer rounded-xl border border-slate-200/70 bg-white/60 px-3 py-2 text-xs font-bold text-slate-600 backdrop-blur transition-all hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
